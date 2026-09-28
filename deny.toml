@@ -1,0 +1,6 @@
+# Review by 2026-12-31: remove this ignore when upstream Nickel drops paste.
+# (cargo-deny 0.20.2 has no expiry field for ignores, so the review date lives in this comment.)
+[advisories]
+ignore = [
+  { id = "RUSTSEC-2024-0436", reason = "paste is an unmaintained proc-macro with no known vulnerability, pulled in transitively by nickel-lang-core 0.18.0; no safe upgrade exists; remove when upstream Nickel drops paste" },
+]
