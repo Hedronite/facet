@@ -31,6 +31,9 @@ pub use repository::{
 };
 pub use structure::{ItemKind, StructureError, StructureOperation, StructureResult};
 
+#[cfg(test)]
+mod totality_tests;
+
 /// An OpenCollection document together with its supported domain projection.
 #[derive(Clone, Debug)]
 pub struct ParsedCollection {

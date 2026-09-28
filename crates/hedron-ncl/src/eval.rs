@@ -141,6 +141,8 @@ pub fn eval_export_with_prelude(name: &str, body: &str) -> Result<serde_json::Va
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::mpsc, time::Duration};
+
     use super::*;
 
     #[test]
@@ -209,5 +211,23 @@ mod tests {
             &[],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn pathological_program_finishes_within_declared_bound() {
+        let mut source = String::with_capacity(64 * 1024);
+        source.push('{');
+        for index in 0..4_096 {
+            let _ = std::fmt::Write::write_fmt(&mut source, format_args!("field_{index} = 0, "));
+        }
+        source.push('}');
+
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(eval_export("pathological.ncl", &source));
+        });
+        let _outcome = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("pathological Nickel program exceeded the 2-second bound");
     }
 }

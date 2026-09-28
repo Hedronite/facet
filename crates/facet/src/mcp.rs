@@ -28,6 +28,7 @@ use crate::{
 
 /// Protocol version answered when the client's is unknown.
 const PROTOCOL_VERSION: &str = "2025-06-18";
+const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
 /// Serves MCP over the process's stdin/stdout until EOF. Exit code 0 on a
 /// clean EOF, 1 on an I/O failure.
@@ -75,13 +76,34 @@ pub const TOOLS: &[&str] = &[
 ];
 
 /// Reads JSON-RPC messages from `input` and writes responses to `output`.
-pub(crate) fn serve<R: BufRead, W: Write>(input: R, mut output: W) -> io::Result<()> {
-    for line in input.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
+pub(crate) fn serve<R: BufRead, W: Write>(mut input: R, mut output: W) -> io::Result<()> {
+    let mut frame = Vec::with_capacity(8 * 1024);
+    while let Some(oversized) = read_frame(&mut input, &mut frame)? {
+        if oversized {
+            write_message(
+                &mut output,
+                &rpc_error(
+                    Value::Null,
+                    -32700,
+                    "parse error: MCP frame exceeds 8 MiB".to_owned(),
+                ),
+            )?;
             continue;
         }
-        let message: Value = match serde_json::from_str(&line) {
+        if frame.iter().all(|byte| byte.is_ascii_whitespace()) {
+            continue;
+        }
+        let line = match std::str::from_utf8(&frame) {
+            Ok(line) => line,
+            Err(error) => {
+                write_message(
+                    &mut output,
+                    &rpc_error(Value::Null, -32700, format!("parse error: {error}")),
+                )?;
+                continue;
+            }
+        };
+        let message: Value = match serde_json::from_str(line) {
             Ok(message) => message,
             Err(error) => {
                 write_message(
@@ -96,6 +118,37 @@ pub(crate) fn serve<R: BufRead, W: Write>(input: R, mut output: W) -> io::Result
         }
     }
     Ok(())
+}
+
+fn read_frame<R: BufRead>(input: &mut R, frame: &mut Vec<u8>) -> io::Result<Option<bool>> {
+    frame.clear();
+    let mut oversized = false;
+    loop {
+        let (consumed, ended) = {
+            let buffer = input.fill_buf()?;
+            if buffer.is_empty() {
+                return if frame.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(oversized))
+                };
+            }
+            let newline = buffer.iter().position(|byte| *byte == b'\n');
+            let consumed = newline.map_or(buffer.len(), |index| index + 1);
+            let payload_len = newline.map_or(consumed, |index| index);
+            let room = MAX_FRAME_BYTES.saturating_sub(frame.len());
+            let copied = payload_len.min(room);
+            frame.extend_from_slice(&buffer[..copied]);
+            if copied < payload_len {
+                oversized = true;
+            }
+            (consumed, newline.is_some())
+        };
+        input.consume(consumed);
+        if ended {
+            return Ok(Some(oversized));
+        }
+    }
 }
 
 fn write_message<W: Write>(output: &mut W, message: &Value) -> io::Result<()> {
@@ -778,7 +831,7 @@ pub(crate) fn tool_descriptions() -> Vec<Value> {
 mod tests {
     use serde_json::json;
 
-    use super::{TOOLS, handle, serve, tool_descriptions};
+    use super::{MAX_FRAME_BYTES, TOOLS, handle, serve, tool_descriptions};
 
     #[test]
     fn lists_every_tool_with_a_schema() {
@@ -813,17 +866,28 @@ mod tests {
 
     #[test]
     fn serve_reports_parse_errors_and_keeps_going() {
-        let input = b"not json\n{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}\n";
-        let mut output = Vec::new();
-        serve(&input[..], &mut output).unwrap();
-        let lines: Vec<serde_json::Value> = String::from_utf8(output)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0]["error"]["code"], -32700);
-        assert_eq!(lines[1]["id"], 9);
+        let ping = b"{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}\n";
+        for mut malformed in [
+            b"not json\n".to_vec(),
+            {
+                let mut frame = vec![b'{'; MAX_FRAME_BYTES + 1];
+                frame.push(b'\n');
+                frame
+            },
+            vec![0xff, b'\n'],
+        ] {
+            malformed.extend_from_slice(ping);
+            let mut output = Vec::new();
+            serve(&malformed[..], &mut output).unwrap();
+            let lines: Vec<serde_json::Value> = String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(lines.len(), 2);
+            assert_eq!(lines[0]["error"]["code"], -32700);
+            assert_eq!(lines[1]["id"], 9);
+        }
     }
 
     #[test]

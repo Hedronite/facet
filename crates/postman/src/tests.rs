@@ -1,5 +1,6 @@
 use std::{
     fs,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -275,4 +276,55 @@ fn bundled_save_reload_preserves_imported_semantics_and_environment() {
     };
     assert_eq!(request, source_request);
     fs::remove_file(destination).unwrap();
+}
+
+fn next_totality(seed: &mut u64) -> u64 {
+    *seed = seed
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    *seed
+}
+
+fn totality_case(index: usize, seed: &mut u64) -> String {
+    match index % 9 {
+        0 => String::new(),
+        1 => "\n".to_owned(),
+        2 => "{".to_owned(),
+        3 => "[]".to_owned(),
+        4 => {
+            let depth = 1 + (next_totality(seed) % 64) as usize;
+            format!("{}0{}", "[".repeat(depth), "]".repeat(depth))
+        }
+        5 => "{\"a\":1,\"a\":2}".to_owned(),
+        6 => {
+            if next_totality(seed) & 1 == 0 {
+                "yes\n".to_owned()
+            } else {
+                "on\n".to_owned()
+            }
+        }
+        7 => "\t".repeat(1 + (next_totality(seed) % 16) as usize),
+        _ => {
+            let width = (next_totality(seed) % 48) as usize;
+            let alphabet = b"{}[],:\"012xyz\n\t";
+            (0..width)
+                .map(|_| alphabet[(next_totality(seed) % alphabet.len() as u64) as usize] as char)
+                .collect()
+        }
+    }
+}
+
+#[test]
+fn inspect_postman_source_is_total_over_fixed_seed_corpus() {
+    let path = temporary_path("totality.json");
+    let mut seed = 0x504f_5354_4d41_4e31;
+    for index in 0..2_048 {
+        fs::write(&path, totality_case(index, &mut seed)).unwrap();
+        let result = catch_unwind(AssertUnwindSafe(|| inspect_postman_source(&path)));
+        assert!(
+            result.is_ok(),
+            "Postman inspect panicked for corpus case {index}"
+        );
+    }
+    fs::remove_file(path).unwrap();
 }
