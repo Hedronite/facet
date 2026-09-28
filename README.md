@@ -95,11 +95,11 @@ TypeSafe / Jev System One recipes (Choice + Noul, shadow, `$TYPESAFE_API_KEY` vi
 
 ## What you get
 
-| | Probe | Facet |
+| | Upstream Probe | Facet (this repository) |
 |---|---|---|
 | Core Engine | Rust, filesystem-first | Same core, cherry-pickable |
 | Collections | OpenCollection YAML | Same YAML, 100% compatible |
-| Interface | GPUI Desktop + CLI | Ratatui TUI (`facet tui`) + agent CLI |
+| Interface | GPUI Desktop + CLI (upstream) | Ratatui TUI (`facet tui`) + agent CLI; the in-repo `probe` binary is CLI-only |
 | History | In-memory session | **facet-lattice** (SQLite workspace & machine store) |
 | Binaries | `probe` | `facet` (coexists with `probe`) |
 | Output | Human-readable & JSON | Deterministic, versioned JSON for automation |

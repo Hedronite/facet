@@ -1,17 +1,16 @@
 # Development Practices
 
-Read this document for implementation workflow, dependency changes, GPUI work, or
-test design. Project-wide architectural invariants remain in `AGENTS.md`.
+Read this document for implementation workflow, dependency changes, and test
+design. Project-wide architectural invariants remain in `AGENTS.md`.
 
 ## Rust and Async Work
 
-- Prefer normal ownership, GPUI entity ownership, message passing, task results, and
-  immutable shared data before `Arc`, `Mutex`, `RwLock`, `RefCell`, or global mutable
-  state.
-- Keep shared networking and application APIs asynchronous where the desktop needs
-  them. Do not create duplicate synchronous business logic for the CLI.
+- Prefer normal ownership, message passing, task results, and immutable shared
+  data before `Arc`, `Mutex`, `RwLock`, `RefCell`, or global mutable state.
+- Keep shared networking and application APIs asynchronous where the TUI needs them.
+  Do not create duplicate synchronous business logic for the CLI.
 - Run filesystem I/O, HTTP, large YAML or JSON parsing, Git work, and expensive
-  highlighting away from the GPUI thread.
+  highlighting away from the TUI event/render loop.
 - Never use `unsafe` solely to bypass ownership problems. Any unsafe code requires
   explicit justification.
 
@@ -21,15 +20,9 @@ Before adding a crate, check the standard library and existing dependencies. Pre
 actively maintained, cross-platform crates and avoid large dependencies for trivial
 work. Do not replace dependencies without a task-specific reason.
 
-Probe uses Longbridge `gpui-base` (`gpui-base` / `gpui_base`, from
-`longbridge/gpui-component`'s `crates/base`). Never add the separate, pre-styled
-`gpui-component` crate or copy its APIs. Initialize the theme once through
-`probe_desktop::theme::Theme::init(cx)`.
-
-Keep GPUI and `gpui-base` on compatible pinned sources. If their types conflict,
-inspect the pinned `gpui-base` lockfile and correct the GPUI pin rather than mixing
-revisions. Do not upgrade either dependency during unrelated work. Inspect the exact
-pinned source and examples before using unfamiliar APIs.
+The legacy GPUI desktop has been retired from this Facet workspace. Do not
+reintroduce a GUI framework or change the remaining product's dependency policy
+without task-specific approval.
 
 Do not introduce Electron, Tauri, WebView, React, Flutter, or another GUI framework
 without explicit approval.
@@ -40,10 +33,9 @@ Keep shared fixtures under `tests/fixtures/`. CLI integration tests cover comman
 behavior, JSON output, and exit codes.
 
 Do not automate visual constants such as spacing, radii, typography sizes, palette
-values, or contrast ratios. Review those visually against [DESIGN.md](DESIGN.md).
-Desktop tests may cover behavior such as appearance selection, pane constraints,
-focus, and highlight ranges. Extend an existing desktop test when it already builds
-the same surface and the new assertion is a follow-on interaction.
+values, or contrast ratios. Review TUI theme behavior against [FACET.md](FACET.md). TUI tests may cover
+behavior such as theme selection, navigation, focus, and response highlighting;
+extend an existing TUI test when it already covers the same surface.
 
 Before completing a code change, run:
 

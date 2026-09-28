@@ -2,7 +2,6 @@
 members = [
     "crates/cli",
     "crates/core",
-    "crates/desktop",
     "crates/facet",
     "crates/facet-record",
     "crates/http",
@@ -16,22 +15,9 @@ members = [
 exclude = [
     "vendor/nickel-lang-vector",
 ]
-# Facet builds: probe-desktop stays a member (upstream merges stay clean) but is
-# excluded from the default set so `cargo build`/`cargo test` skip GPUI.
-# Use `cargo build --workspace` to include it.
-default-members = [
-    "crates/cli",
-    "crates/core",
-    "crates/facet",
-    "crates/facet-record",
-    "crates/http",
-    "crates/lattice",
-    "crates/opencollection",
-    "crates/postman",
-    "crates/facet-tui",
-    "crates/yaak",
-    "crates/hedron-ncl",
-]
+# Facet ships the CLI, Ratatui TUI, MCP adapter, Lattice, OpenCollection,
+# importers, and shared application/domain crates. The legacy Probe GPUI
+# desktop member was retired in Phase F.
 resolver = "2"
 
 # Three version axes, each independently true (see docs/FACET.md):

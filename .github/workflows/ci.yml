@@ -26,23 +26,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - name: Install GPUI Linux dependencies
+      - name: Install native Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends \
             clang \
-            libasound2-dev \
-            libfontconfig-dev \
-            libglib2.0-dev \
-            libssl-dev \
-            libvulkan1 \
-            libwayland-dev \
-            libx11-xcb-dev \
-            libxkbcommon-x11-dev
+            cmake
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-targets --all-features
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-targets --all-features
       # No tag on a PR, so gate the pair that exists: Cargo == `facet --version`.
       # The tag leg is enforced on release (.github/workflows/release.yml).
       - name: Version truth (Cargo == facet --version)
@@ -60,9 +53,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
-      # probe-desktop is excluded until Phase F retires it: gpui pulls in five
-      # unmaintained crates (bincode, instant, proc-macro-error2, rustybuzz,
-      # ttf-parser). Everything else in the workspace is checked with the
-      # cargo-deny defaults plus the single dated ignore in deny.toml.
-      - name: cargo deny (workspace minus probe-desktop)
-        run: cargo deny --workspace --exclude probe-desktop check advisories bans sources
+      # The whole workspace is checked with the cargo-deny defaults plus the
+      # single dated ignore in deny.toml. (probe-desktop was retired in Phase F.)
+      - name: cargo deny (full workspace)
+        run: cargo deny --workspace check advisories bans sources

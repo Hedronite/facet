@@ -1,8 +1,7 @@
 # cargo-deny policy. Everything not set here uses the cargo-deny defaults.
 #
-# Scope: CI runs `cargo deny --workspace --exclude probe-desktop check advisories bans sources`.
-# probe-desktop is excluded until Phase F retires it, because gpui pulls in five unmaintained
-# crates (bincode, instant, proc-macro-error2, rustybuzz, ttf-parser). Do not add ignores for them.
+# Scope: CI runs `cargo deny --workspace check advisories bans sources` over the whole workspace.
+# (probe-desktop and its gpui-only unmaintained crates were retired in Phase F.)
 [advisories]
 ignore = [
   # Review by 2026-12-31 (cargo-deny has no expiry field, so the date lives in this comment).

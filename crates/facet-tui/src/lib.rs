@@ -1,9 +1,9 @@
 //! Facet's ratatui TUI (`facet tui`).
 //!
 //! Layout + semantic-token translation of the Porcelain Honey /
-//! Graphite Honey palette from the desktop `theme.rs` onto terminal cells.
-//! The TUI is an interface over the shared application and domain crates
-//! (CLI / desktop parity), not a parallel runtime.
+//! Graphite Honey palette, preserving historical palette provenance from the
+//! retired desktop source onto terminal cells. The TUI is an interface over
+//! the shared application and domain crates (CLI parity), not a parallel runtime.
 
 mod app;
 mod theme;
