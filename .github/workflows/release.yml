@@ -22,24 +22,17 @@ jobs:
         with:
           toolchain: 1.95.0
           components: clippy, rustfmt
-      - name: Install GPUI Linux dependencies
+      - name: Install native Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends \
             clang \
-            libasound2-dev \
-            libfontconfig-dev \
-            libglib2.0-dev \
-            libssl-dev \
-            libvulkan1 \
-            libwayland-dev \
-            libx11-xcb-dev \
-            libxkbcommon-x11-dev
+            cmake
       - name: Version truth (git tag == Cargo)
         run: ./scripts/version-check.sh --tag "$GITHUB_REF_NAME"
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-targets --all-features
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-targets --all-features
 
   build-cli:
     name: Build CLI (${{ matrix.platform }})

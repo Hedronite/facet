@@ -24,20 +24,22 @@ Rules:
 - No upstream crate is renamed. New crates carry Facet names.
 - The `facet` binary delegates every Probe command to `probe-cli` verbatim. Only
   `request run` (to record), `history`, `blob`, `gc`, and `tui` are Facet's.
-- `probe-desktop` stays a workspace member but is out of `default-members`, so
-  `cargo build` and `cargo test` skip GPUI. `cargo build --workspace` includes it.
+- The legacy Probe GPUI desktop was retired from this Facet workspace in Phase F.
+  The in-repo `probe` binary is CLI-only; Facet's interactive surface is the Ratatui TUI.
 
 ### License and attribution
 
 - **Upstream-derived files stay Apache-2.0.** Probe's `LICENSE` (Apache License
-  2.0) governs `crates/cli`, `crates/core`, `crates/desktop`, `crates/http`,
+  2.0) governs `crates/cli`, `crates/core`, `crates/http`,
   `crates/opencollection`, `crates/postman`, `crates/yaak`, and the docs they
-  came with. They are never relicensed, so Probe PRs from this tree stay legal.
-  Files modified from upstream carry a change notice (Section 4(b)).
+  came with. They are never relicensed. The former desktop member is historical,
+  not a currently shipped workspace crate. Files modified from upstream carry a
+  change notice (Section 4(b)).
 - **Facet-original crates are MIT:** `facet-cli` (`crates/facet`), `facet-record`,
   **`facet-lattice`** (`crates/lattice`), `facet-tui`. Each carries `LICENSE-MIT` and declares `license = "MIT"`
-  in its own `Cargo.toml`. `crates/facet-tui` adapts palette values from the
-  upstream desktop theme; that derivation is noted in `NOTICE`.
+  in its own `Cargo.toml`. `crates/facet-tui` retains historical palette
+  provenance from `crates/desktop/src/theme.rs` at audited source SHA `2c6ecfd`
+  (Apache-2.0), as recorded in `NOTICE`; this does not mean the desktop crate ships here.
 - **Copyright:** `Copyright 2026 VirtualMachinist` for the Facet-original work.
   Upstream copyright notices are kept as found; the root `LICENSE` text is
   upstream's and is left byte-identical.
@@ -168,7 +170,7 @@ Two trains. Finish the Facet-owned rest **before** pivoting to Probe.
 | 1 | **MCP** | `facet mcp` stdio. Tools over lattice + record + the same run function (never shell out to `facet`). v1: session start/end, request list/get/run, history list/get, blob_get, run_diff, run_replay, sql_query. Same JSON envelopes. Skills/rules before freezing names. | Facet adapter; not a second API |
 | 2 | **Git HEAD auto-tag** | On record, tag `git:<sha>[-dirty]` when cwd is a repo. No column. `history --tag git:…`. | Facet-only |
 | 3 | **Bells** | `facet last`; sparkline on the `:history` grid; pins. Each rides a command that is already green. | Facet-only |
-| 4 | **Theme files** (Probe 05 rest) | Versioned files for `facet-tui`; invalid → Graphite/Porcelain. | Facet TUI; desktop files stay upstream |
+| 4 | **Theme files** (Probe 05 rest) | Versioned files for `facet-tui`; invalid → Graphite/Porcelain. | Facet TUI only; the retired Probe desktop is not in this workspace |
 | 5 | **TUI env editor** (Probe 07 rest) + `ctrl+u`/`ctrl+d` | Overlay UI on `facet env` / machine store. | Facet TUI |
 
 #### Probe contribution (later, separate)
@@ -207,7 +209,7 @@ get files.
 Environment values that are secrets (tokens, keys) never sit in plaintext in
 the machine store. Two backends, picked by environment:
 
-- **OS keyring** (default, desktop): the `keyring` crate (macOS Keychain,
+- **OS keyring** (default, platform): the `keyring` crate (macOS Keychain,
   Windows Credential Manager, Linux Secret Service). The `environments` row
   stores a `secret_ref` of the form `kr:<user>`; `value` is NULL. The secret
   itself lives in the keyring under the `facet` service.
@@ -701,7 +703,7 @@ accent = "#e7821b"            # any subset of tokens; "#rrggbb" only
 window_bg = "#101012"
 ```
 
-Rules (DESIGN.md § Future Plain-Text Themes): missing tokens merge with the
+Rules (the Theme files contract in this document): missing tokens merge with the
 built-in base; unknown top-level keys are tolerated so the format can grow
 additively inside a version; an unsupported `version`, an unknown
 `[colors]` token, or an invalid value rejects the **whole file** — the TUI

@@ -1,5 +1,6 @@
-//! Versioned, human-editable theme files (DESIGN.md § Future Plain-Text
-//! Themes), for `facet tui` only — the desktop's files stay upstream.
+//! Versioned, human-editable theme files (the Theme files section in
+//! `docs/FACET.md`), for `facet tui` only. No GPUI desktop theme files are
+//! shipped in this workspace.
 //!
 //! A theme file is TOML at `<config dir>/themes/<name>.toml` (the config
 //! dir is `FACET_CONFIG_DIR` or the platform config dir for `facet`):

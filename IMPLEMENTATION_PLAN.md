@@ -11,11 +11,11 @@ Facet-owned roadmap going forward.
 
 ### Inherited core (Probe)
 
-The workspace still carries the product foundation Probe established for the first
-desktop release:
+The workspace retains Probe-derived shared core and CLI foundations; the legacy
+GPUI desktop crate was retired from this Facet tree in Phase F:
 
-- a Rust workspace with separate core, OpenCollection, HTTP, CLI, desktop, Postman,
-  and Yaak crates;
+- a Rust workspace with separate core, OpenCollection, HTTP, CLI, Postman, and
+  Yaak crates; Facet adds its Ratatui TUI and MCP adapter;
 - bundled and unbundled OpenCollection loading, validation, retained YAML, atomic
   persistence, external-change detection, and recovery-aware structural writes;
 - an indexed in-memory workspace with repository-owned persistent selectors;
@@ -26,9 +26,9 @@ desktop release:
   and workspace editing, and Postman and Yaak import;
 - performance fixtures and benchmarks for workspaces up to 10,000 requests.
 
-The public CLI contract is documented in [docs/CLI.md](docs/CLI.md). Shared
-architecture and upstream desktop design remain in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/DESIGN.md](docs/DESIGN.md).
+The public CLI contract is documented in [docs/CLI.md](docs/CLI.md). Shared architecture remains in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Retired desktop design is historical in [docs/DESIGN.md](docs/DESIGN.md); the
+current Facet TUI theme contract is in [docs/FACET.md](docs/FACET.md).
 Code and tests remain authoritative when a document falls behind.
 
 ### Facet today
@@ -40,7 +40,7 @@ Facet-original surface on top of that core (see [docs/FACET.md](docs/FACET.md)):
   bodies, sessions, and cross-workspace index;
 - agent CLI: `history`, `blob`, `gc`, and recording on `request run`;
 - Ratatui TUI (`facet tui`) with Graphite Honey / Porcelain Honey; vim-modal keys
-  (default); `probe-desktop` remains a workspace member but is out of the default build;
+  (default); `probe-desktop` was retired from this workspace in Phase F;
 - Facet-original crates (`facet`, `lattice`, `facet-tui`) under MIT; upstream-derived
   crates remain Apache-2.0.
 
@@ -85,7 +85,7 @@ Ship in Facet; offer the shared core upstream first when it touches
 | 02 | WebSocket | TUI session pane + Lattice events + `facet` JSONL | Protocol session/event abstraction in `probe-core` (**Thread A**) |
 | 03 | GraphQL | Collection item + TUI editor + history | Shared operation/variables model (**Thread A**) |
 | 04 | gRPC streaming | Same session adapter as WebSocket | Streaming on the protocol session (**Thread A**) |
-| 05 | Custom themes (rest) | Versioned theme files for `facet-tui` | Desktop theme files per [docs/DESIGN.md](docs/DESIGN.md#future-plain-text-themes) |
+| 05 | Custom themes (rest) | Versioned theme files for `facet-tui` | Probe desktop theme files remain upstream; Facet TUI theme rules are in [docs/FACET.md](docs/FACET.md#theme-files) |
 | 06 | Git integration | Auto-tag `git:<sha>[-dirty]` on record; filesystem stays the Git boundary. No lazygit, no host UI. | No provider coupling in core |
 | 07 | Secret storage (rest) | TUI env editor on `facet env` / machine store; offer the resolve hook upstream | Probe desktop |
 
@@ -125,13 +125,13 @@ rusqlite default; DuckDB ATTACH is `scripts/duckdb-attach-demo.sh`.
 Versioned, human-editable theme files after the semantic token model is stable.
 Parsing and validation stay outside components; invalid themes fall back to
 built-ins. Local presentation data, not OpenCollection content.
-[docs/DESIGN.md](docs/DESIGN.md#future-plain-text-themes).
+[docs/FACET.md](docs/FACET.md#theme-files).
 
 #### Streaming protocols
 
 Shared protocol session/event abstraction before WebSocket, SSE, or gRPC.
-Implementations independent of stdin/stdout and GPUI; CLI adapts events to
-JSONL, TUI/desktop to visual sessions.
+Implementations remain independent of stdin/stdout and any UI framework; the CLI
+adapts events to JSONL and the TUI renders sessions.
 
 #### Git
 

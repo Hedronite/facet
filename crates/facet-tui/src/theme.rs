@@ -1,15 +1,14 @@
-//! Semantic design tokens for the Probe TUI.
+//! Semantic design tokens for the Facet TUI.
 //!
 //! Maps the Porcelain Honey (light) and Graphite Honey (dark) palettes
-//! from `crates/desktop/src/theme.rs` onto a role-based token model that
-//! matches the desktop's intent. Components consume `Theme`/`Style` values
-//! rather than embedding raw colors so we can switch appearance without
-//! touching call sites.
+//! onto a role-based token model. Their palette values retain historical
+//! provenance from `crates/desktop/src/theme.rs` at audited source SHA
+//! `2c6ecfd` (Apache-2.0), as recorded in the root NOTICE. Components consume
+//! `Theme`/`Style` values rather than embedding raw colors so appearance can
+//! change without touching call sites.
 //!
-//! The hex constants here are 1:1 with the desktop palette; they are
-//! intentionally duplicated rather than imported so the TUI adapter stays
-//! independent of the GPUI desktop crate (the fork's TUI runs without
-//! the desktop).
+//! The palette constants remain intentionally duplicated; this TUI has no
+//! dependency on the retired GPUI desktop crate.
 //!
 //! Three resolvers are provided per token, selected by the terminal's
 //! color depth:

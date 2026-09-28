@@ -1,3 +1,5 @@
+// Modified by Hedronite on 2026-09-26: reworded the editor description for
+// the retired desktop surface (Apache-2.0 License, Section 4(b)).
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -126,7 +128,7 @@ impl LoadedWorkspace {
 
     /// Mutably looks up a request in the loaded in-memory workspace.
     ///
-    /// Desktop editors use this fast path to apply draft changes immediately. Saving
+    /// Interactive editors use this fast path to apply draft changes immediately. Saving
     /// remains an explicit, separate repository operation.
     pub fn request_mut(&mut self, key: RequestKey) -> Option<&mut probe_core::HttpRequest> {
         self.workspace.request_mut(key)
