@@ -1,0 +1,36 @@
+[package]
+name = "nickel-lang-vector"
+version = "0.2.0"
+description = "Persistent vectors for Nickel"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+imbl-sized-chunks.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+arbitrary.workspace = true
+arbtest.workspace = true
+criterion.workspace = true
+rpds.workspace = true
+
+[[bench]]
+name = "array"
+harness = false
+
+[[bench]]
+name = "rpds_comparison"
+harness = false
+
+[[bench]]
+name = "slice"
+harness = false
