@@ -13,6 +13,9 @@ members = [
     "crates/yaak",
     "crates/hedron-ncl",
 ]
+exclude = [
+    "vendor/nickel-lang-vector",
+]
 # Facet builds: probe-desktop stays a member (upstream merges stay clean) but is
 # excluded from the default set so `cargo build`/`cargo test` skip GPUI.
 # Use `cargo build --workspace` to include it.
@@ -51,3 +54,9 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
+
+# Temporary: vendored nickel-lang-vector 0.2.0 with only its imbl-sized-chunks requirement
+# raised to 0.2 (fixes RUSTSEC-2026-0292 and drops unmaintained bitmaps). Remove this patch and
+# vendor/nickel-lang-vector once upstream nickel-lang-vector requires imbl-sized-chunks >= 0.2.
+[patch.crates-io]
+nickel-lang-vector = { path = "vendor/nickel-lang-vector" }
