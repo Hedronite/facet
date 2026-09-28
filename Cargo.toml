@@ -55,5 +55,8 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 
+# Temporary: vendored nickel-lang-vector 0.2.0 with only its imbl-sized-chunks requirement
+# raised to 0.2 (fixes RUSTSEC-2026-0292 and drops unmaintained bitmaps). Remove this patch and
+# vendor/nickel-lang-vector once upstream nickel-lang-vector requires imbl-sized-chunks >= 0.2.
 [patch.crates-io]
 nickel-lang-vector = { path = "vendor/nickel-lang-vector" }

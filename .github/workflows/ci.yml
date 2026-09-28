@@ -50,3 +50,19 @@ jobs:
         run: |
           cargo build --release -p facet-cli --bin facet
           ./scripts/version-check.sh --binary target/release/facet
+
+  deny:
+    name: cargo-deny (advisories, bans, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      # probe-desktop is excluded until Phase F retires it: gpui pulls in five
+      # unmaintained crates (bincode, instant, proc-macro-error2, rustybuzz,
+      # ttf-parser). Everything else in the workspace is checked with the
+      # cargo-deny defaults plus the single dated ignore in deny.toml.
+      - name: cargo deny (workspace minus probe-desktop)
+        run: cargo deny --workspace --exclude probe-desktop check advisories bans sources

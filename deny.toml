@@ -1,6 +1,10 @@
-# Review by 2026-12-31: remove this ignore when upstream Nickel drops paste.
-# (cargo-deny 0.20.2 has no expiry field for ignores, so the review date lives in this comment.)
+# cargo-deny policy. Everything not set here uses the cargo-deny defaults.
+#
+# Scope: CI runs `cargo deny --workspace --exclude probe-desktop check advisories bans sources`.
+# probe-desktop is excluded until Phase F retires it, because gpui pulls in five unmaintained
+# crates (bincode, instant, proc-macro-error2, rustybuzz, ttf-parser). Do not add ignores for them.
 [advisories]
 ignore = [
-  { id = "RUSTSEC-2024-0436", reason = "paste is an unmaintained proc-macro with no known vulnerability, pulled in transitively by nickel-lang-core 0.18.0; no safe upgrade exists; remove when upstream Nickel drops paste" },
+  # Review by 2026-12-31 (cargo-deny has no expiry field, so the date lives in this comment).
+  { id = "RUSTSEC-2024-0436", reason = "paste is an unmaintained proc-macro with no known vulnerability. It comes in via nickel-lang-core 0.18 (through hedron-ncl). nickel-lang-core 0.19 (released 2026-09-17) drops paste; bumping hedron-ncl to it is a separate follow-up that can remove this ignore. Review by 2026-12-31." },
 ]
