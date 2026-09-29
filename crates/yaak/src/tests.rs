@@ -223,3 +223,24 @@ fn inspect_yaak_json_and_yaml_is_total_over_fixed_seed_corpus() {
     fs::remove_file(json_path).unwrap();
     fs::remove_dir_all(sync_path).unwrap();
 }
+
+#[test]
+fn rejects_unsupported_export_schemas() {
+    for schema in [0, 5] {
+        let path = temporary_path(&format!("unsupported-schema-{schema}.json"));
+        fs::write(
+            &path,
+            format!(r#"{{"yaakSchema":{schema},"resources":{{"workspaces":[]}}}}"#),
+        )
+        .unwrap();
+        let error = inspect_yaak_source(&path).unwrap_err();
+        assert!(matches!(
+            error,
+            YaakImportError::Invalid(message)
+                if message == format!(
+                    "unsupported Yaak export schema {schema}; supported schemas are 1 through 4"
+                )
+        ));
+        fs::remove_file(path).unwrap();
+    }
+}

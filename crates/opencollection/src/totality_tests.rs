@@ -40,3 +40,26 @@ fn parse_is_total_over_fixed_seed_corpus() {
         assert!(result.is_ok(), "parse panicked for corpus case {index}");
     }
 }
+
+#[test]
+fn parse_retains_unsupported_items_and_keys() {
+    let source = r#"opencollection: 1.0.0
+info:
+  name: Retention
+bundled: true
+x-unsupported: true
+items:
+  - info:
+      type: note
+      name: Ignored note
+    x-item: keep
+"#;
+    let parsed = parse(source).expect("retention fixture should parse");
+    assert!(parsed.collection().items.is_empty());
+    let retained = parsed
+        .to_yaml()
+        .expect("retention fixture should serialize");
+    assert!(retained.contains("x-unsupported: true"));
+    assert!(retained.contains("Ignored note"));
+    assert!(retained.contains("x-item: keep"));
+}
