@@ -1084,6 +1084,10 @@ impl App {
     async fn handle_event(&mut self, event: crossterm::event::Event) -> Result<bool, TuiError> {
         use crossterm::event::{Event, KeyEvent, KeyEventKind};
 
+        if matches!(event, Event::FocusGained) {
+            self.refresh_live_theme();
+            return Ok(true);
+        }
         if let Event::Key(KeyEvent {
             code,
             kind,
@@ -5161,5 +5165,15 @@ mod tests {
         app.execute_command().await.unwrap();
         assert_eq!(app.collection_name(), Some("GitHub (Halo agent)"));
         assert!(app.has_collection());
+    }
+
+    #[tokio::test]
+    async fn focus_gained_reloads_live_theme() {
+        let mut app = App::load(None).await;
+        let redraw = app
+            .handle_event(crossterm::event::Event::FocusGained)
+            .await
+            .unwrap();
+        assert!(redraw);
     }
 }

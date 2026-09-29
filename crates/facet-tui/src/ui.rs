@@ -1630,7 +1630,7 @@ mod tests {
     use crate::theme::{Appearance, Depth, Theme};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use std::path::PathBuf;
+    use std::{fs, path::PathBuf};
 
     fn fixture() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2053,5 +2053,18 @@ mod tests {
             !text.contains("hunter2"),
             "secret value must never render: {text}"
         );
+    }
+
+    #[tokio::test]
+    async fn long_collection_path_keeps_full_theme_label() {
+        let root = tempfile::tempdir().unwrap();
+        let nested = root.path().join("a".repeat(180));
+        fs::create_dir_all(&nested).unwrap();
+        let collection = nested.join("collection.yml");
+        fs::copy(fixture(), &collection).unwrap();
+        let app = App::load(Some(&collection)).await;
+        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        app.render_to(&mut terminal).unwrap();
+        assert!(dump(terminal.backend().buffer()).contains("Graphite Honey"));
     }
 }
