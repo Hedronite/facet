@@ -1,6 +1,11 @@
 use crate::{ImportDiagnosticSeverity, YaakImportError, YaakSourceFormat, inspect_yaak_source};
 use probe_core::{AuthenticationKind, Body, CollectionItem, RequestBody};
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{
+    fs,
+    panic::{AssertUnwindSafe, catch_unwind},
+    path::PathBuf,
+    time::SystemTime,
+};
 
 fn temporary_path(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -154,4 +159,88 @@ fn sync_directory_allows_partial_import_with_unsupported_resources() {
             && diagnostic.resource_id.as_deref() == Some("sse_1")
     }));
     fs::remove_dir_all(root).unwrap();
+}
+
+fn next_totality(seed: &mut u64) -> u64 {
+    *seed = seed
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    *seed
+}
+
+fn totality_case(index: usize, seed: &mut u64) -> String {
+    match index % 9 {
+        0 => String::new(),
+        1 => "\n".to_owned(),
+        2 => "---".to_owned(),
+        3 => "{".to_owned(),
+        4 => {
+            let depth = 1 + (next_totality(seed) % 64) as usize;
+            format!("{}0{}", "[".repeat(depth), "]".repeat(depth))
+        }
+        5 => "a: 1\na: 2\n".to_owned(),
+        6 => {
+            if next_totality(seed) & 1 == 0 {
+                "yes\n".to_owned()
+            } else {
+                "on\n".to_owned()
+            }
+        }
+        7 => "\t".repeat(1 + (next_totality(seed) % 16) as usize),
+        _ => {
+            let width = (next_totality(seed) % 48) as usize;
+            let alphabet = b"{}[],:\"012xyz\n\t";
+            (0..width)
+                .map(|_| alphabet[(next_totality(seed) % alphabet.len() as u64) as usize] as char)
+                .collect()
+        }
+    }
+}
+
+#[test]
+fn inspect_yaak_json_and_yaml_is_total_over_fixed_seed_corpus() {
+    let json_path = temporary_path("totality.json");
+    let sync_path = temporary_path("totality-sync");
+    fs::create_dir(&sync_path).unwrap();
+    let yaml_path = sync_path.join("yaak.wk_1.yaml");
+    let mut seed = 0x5941_414b_544f_5441;
+    for index in 0..2_048 {
+        let source = totality_case(index, &mut seed);
+        fs::write(&json_path, &source).unwrap();
+        let json_result = catch_unwind(AssertUnwindSafe(|| inspect_yaak_source(&json_path)));
+        assert!(
+            json_result.is_ok(),
+            "Yaak JSON inspect panicked for corpus case {index}"
+        );
+
+        fs::write(&yaml_path, &source).unwrap();
+        let yaml_result = catch_unwind(AssertUnwindSafe(|| inspect_yaak_source(&sync_path)));
+        assert!(
+            yaml_result.is_ok(),
+            "Yaak YAML inspect panicked for corpus case {index}"
+        );
+    }
+    fs::remove_file(json_path).unwrap();
+    fs::remove_dir_all(sync_path).unwrap();
+}
+
+#[test]
+fn rejects_unsupported_export_schemas() {
+    for schema in [0, 5] {
+        let path = temporary_path(&format!("unsupported-schema-{schema}.json"));
+        fs::write(
+            &path,
+            format!(r#"{{"yaakSchema":{schema},"resources":{{"workspaces":[]}}}}"#),
+        )
+        .unwrap();
+        let error = inspect_yaak_source(&path).unwrap_err();
+        assert!(matches!(
+            error,
+            YaakImportError::Invalid(message)
+                if message == format!(
+                    "unsupported Yaak export schema {schema}; supported schemas are 1 through 4"
+                )
+        ));
+        fs::remove_file(path).unwrap();
+    }
 }

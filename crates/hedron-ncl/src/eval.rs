@@ -141,6 +141,12 @@ pub fn eval_export_with_prelude(name: &str, body: &str) -> Result<serde_json::Va
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        process::Command,
+        thread,
+        time::{Duration, Instant},
+    };
+
     use super::*;
 
     #[test]
@@ -209,5 +215,53 @@ mod tests {
             &[],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn pathological_program_finishes_within_declared_bound() {
+        if std::env::var_os("FACET_K3_CHILD").is_some() {
+            let mut source = String::with_capacity(64 * 1024);
+            source.push('{');
+            for index in 0..4_096 {
+                let _ =
+                    std::fmt::Write::write_fmt(&mut source, format_args!("field_{index} = 0, "));
+            }
+            source.push('}');
+            let _ = eval_export("pathological.ncl", &source);
+            return;
+        }
+
+        let mut child = Command::new(std::env::current_exe().expect("test executable path"))
+            .args([
+                "--exact",
+                "eval::tests::pathological_program_finishes_within_declared_bound",
+                "--nocapture",
+            ])
+            .env("FACET_K3_CHILD", "1")
+            .spawn()
+            .expect("spawn pathological Nickel child");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    assert!(
+                        status.success(),
+                        "pathological Nickel child failed: {status}"
+                    );
+                    break;
+                }
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("pathological Nickel program exceeded the 2-second bound");
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("failed waiting for pathological Nickel child: {error}");
+                }
+            }
+        }
     }
 }
