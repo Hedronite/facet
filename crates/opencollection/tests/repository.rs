@@ -34,8 +34,12 @@ fn bundled_directory_loads_opencollection_file_and_unbundled_root_stays_director
     .unwrap();
     let loaded = load_workspace(&*bundled).expect("bundled directory should load");
     assert_eq!(
-        loaded.source_path(),
-        Some(bundled.join("opencollection.yml").as_path())
+        loaded
+            .source_path()
+            .map(fs::canonicalize)
+            .transpose()
+            .unwrap(),
+        Some(fs::canonicalize(bundled.join("opencollection.yml")).unwrap())
     );
 
     let unbundled = temporary_path("unbundled-root");
@@ -46,5 +50,12 @@ fn bundled_directory_loads_opencollection_file_and_unbundled_root_stays_director
     )
     .unwrap();
     let loaded = load_workspace(&*unbundled).expect("unbundled root should load");
-    assert_eq!(loaded.source_path(), Some(&*unbundled));
+    assert_eq!(
+        loaded
+            .source_path()
+            .map(fs::canonicalize)
+            .transpose()
+            .unwrap(),
+        Some(fs::canonicalize(&*unbundled).unwrap())
+    );
 }
