@@ -2127,3 +2127,71 @@ fn cluster_configuration_failure_is_recorded_without_sending_or_exposing_credent
             .contains("credential-canary-do-not-print")
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn github_gh_auth_and_api_never_persist_token() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sandbox = Sandbox::new();
+    let bin = sandbox.root().join("bin");
+    fs::create_dir(&bin).unwrap();
+    let gh = bin.join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\nif [ \"$1\" = auth ]; then printf gh-secret-token; else printf '{\"source\":\"gh\"}'; fi\n",
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let source = r#"opencollection: 1.0.0
+info: { name: GitHub auth }
+bundled: true
+config:
+  environments:
+    - name: auth
+      variables:
+        - name: githubToken
+          value: ""
+items:
+  - info: { name: Get repo, type: http }
+    http:
+      method: GET
+      url: https://api.github.com.invalid/repos/example/project
+      headers:
+        - name: Authorization
+          value: Bearer {{githubToken}}
+"#;
+    let workspace = sandbox.root().join("github.yml");
+    fs::write(&workspace, source).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let output = sandbox
+        .facet()
+        .env("PATH", path)
+        .args([
+            "request",
+            "run",
+            workspace.to_str().unwrap(),
+            "items/0",
+            "--environment",
+            "auth",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"source\":\"gh\""));
+    assert!(!stdout.contains("gh-secret-token"));
+    assert!(!source.contains("gh-secret-token"));
+    let rewritten = fs::read_to_string(&workspace).unwrap();
+    assert!(!rewritten.contains("gh-secret-token"));
+    let db = rusqlite::Connection::open(sandbox.root().join(".facet/lattice.db")).unwrap();
+    let headers: String = db
+        .query_row("SELECT req_headers FROM runs LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    assert!(!headers.contains("gh-secret-token"));
+}

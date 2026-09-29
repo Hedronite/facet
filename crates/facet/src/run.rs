@@ -79,18 +79,25 @@ pub(crate) fn run(args: &[String], stdin: &mut impl Read) -> Result<CommandOutpu
     let loaded = load(&input, stdin)?;
     let base = input.base_directory();
     let raw = lookup_request(&loaded, selector)?;
-    let hydration = hydrate(
+    let mut hydration = hydrate(
         base.as_deref(),
         environment.as_deref(),
         raw,
         &loaded,
         &variables,
     )?;
+    let mut merged_variables = hydration.merged(&variables);
+    if let Some(token) = facet_record::auth_token_for(raw, &merged_variables) {
+        merged_variables.push(("githubToken".to_owned(), token.clone()));
+        hydration.redact.push(token);
+        hydration.hydrated.push("githubToken".to_owned());
+        hydration.source = Some("gh");
+    }
     let request = resolve_selected(
         &loaded,
         raw,
         environment.as_deref(),
-        &hydration.merged(&variables),
+        &merged_variables,
         strict_variables,
     )?;
     if dry_run {
@@ -319,7 +326,7 @@ pub(crate) fn execute(
 
     let started_at = now_ms();
     let clock = Instant::now();
-    let result = runtime.block_on(async {
+    let mut result = runtime.block_on(async {
         let engine = engine?;
         if let Some(output) = output {
             engine
@@ -331,6 +338,11 @@ pub(crate) fn execute(
                 .await
         }
     });
+    if result.is_err()
+        && let Some(Ok(response)) = facet_record::api_fallback(request)
+    {
+        result = Ok(response);
+    }
     let elapsed_ms = i64::try_from(clock.elapsed().as_millis()).unwrap_or(i64::MAX);
     Ok(Execution {
         started_at,

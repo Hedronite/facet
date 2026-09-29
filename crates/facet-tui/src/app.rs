@@ -857,6 +857,7 @@ impl App {
                 }
             }
         }
+        app.refresh_live_theme();
         app
     }
 
@@ -1083,6 +1084,10 @@ impl App {
     async fn handle_event(&mut self, event: crossterm::event::Event) -> Result<bool, TuiError> {
         use crossterm::event::{Event, KeyEvent, KeyEventKind};
 
+        if matches!(event, Event::FocusGained) {
+            self.refresh_live_theme();
+            return Ok(true);
+        }
         if let Event::Key(KeyEvent {
             code,
             kind,
@@ -1210,6 +1215,7 @@ impl App {
                     Focus::Request => Focus::Response,
                     Focus::Response => Focus::Tree,
                 };
+                self.refresh_live_theme();
                 Ok(true)
             }
             (KeyCode::BackTab, _) => {
@@ -1218,6 +1224,7 @@ impl App {
                     Focus::Request => Focus::Tree,
                     Focus::Response => Focus::Request,
                 };
+                self.refresh_live_theme();
                 Ok(true)
             }
             (KeyCode::Char(']'), _) if self.focus == Focus::Request => {
@@ -1402,6 +1409,7 @@ impl App {
             }
             _ => {}
         }
+        self.refresh_live_theme();
     }
 
     /// `:` command line. Esc cancels, Enter executes, printable chars edit.
@@ -3326,6 +3334,19 @@ impl App {
         self.custom_theme = None;
     }
 
+    /// Re-reads the live Omarchy theme; it wins whenever its state exists.
+    pub fn refresh_live_theme(&mut self) {
+        match theme_file::load_omarchy() {
+            Ok(Some(file)) => {
+                let name = file.name().to_owned();
+                self.theme_state = file.theme(self.theme_state.depth());
+                self.custom_theme = Some(name);
+            }
+            Ok(None) => {}
+            Err(error) => self.status = RunStatus::Failed(format!("omarchy theme: {error}")),
+        }
+    }
+
     /// `:theme <name|path>` / `--theme`: load a theme file and paint with
     /// it. On any error the built-in for the current appearance stays (or
     /// is restored, reverting a previously applied file) and the footer
@@ -3333,6 +3354,15 @@ impl App {
     pub fn apply_theme_file(&mut self, argument: &str) {
         let result =
             theme_file::resolve_theme_path(argument).and_then(|path| ThemeFile::load(&path));
+        let result = if result.is_err()
+            && !argument.ends_with(".toml")
+            && !argument.contains('/')
+            && !argument.contains('\\')
+        {
+            theme_file::load_named(argument).or(result)
+        } else {
+            result
+        };
         match result {
             Ok(file) => {
                 let name = file.name().to_string();
@@ -5124,5 +5154,26 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn open_bundled_directory_mounts_collection() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../foundry/facet/collections/github");
+        let mut app = App::load(None).await;
+        app.command = format!("open {}", path.display());
+        app.execute_command().await.unwrap();
+        assert_eq!(app.collection_name(), Some("GitHub (Halo agent)"));
+        assert!(app.has_collection());
+    }
+
+    #[tokio::test]
+    async fn focus_gained_reloads_live_theme() {
+        let mut app = App::load(None).await;
+        let redraw = app
+            .handle_event(crossterm::event::Event::FocusGained)
+            .await
+            .unwrap();
+        assert!(redraw);
     }
 }

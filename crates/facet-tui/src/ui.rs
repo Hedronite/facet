@@ -69,32 +69,32 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 fn render_title(frame: &mut Frame, area: Rect, app: &App, styles: Styles) {
     let dirty = if app.editor_dirty() { " •" } else { "" };
-    // The path is what tells two same-named collections apart, so it rides
-    // beside the name and is the first thing dropped when the terminal is
-    // narrow (TUI-03).
     let path = app.collection_path_short();
-    let title_text = match (app.collection_name(), path.as_deref()) {
+    let full_title = match (app.collection_name(), path.as_deref()) {
         (Some(name), Some(path)) => format!(" facet · {name}{dirty} · {path} "),
         (Some(name), None) => format!(" facet · {name}{dirty} "),
         (None, Some(path)) => format!(" facet · {path}{dirty} "),
         (None, None) => format!(" facet{dirty} "),
     };
-    let title_text = if title_text.width() > area.width as usize {
-        match app.collection_name() {
-            Some(name) => format!(" facet · {name}{dirty} "),
-            None => format!(" facet{dirty} "),
-        }
-    } else {
-        title_text
+    let name_title = match app.collection_name() {
+        Some(name) => format!(" facet · {name}{dirty} "),
+        None => format!(" facet{dirty} "),
     };
     let appearance = app
         .custom_theme_name()
         .map(str::to_string)
         .unwrap_or_else(|| app.theme().appearance().label().to_string());
+    let label_width = appearance.width() + 1;
+    let title_width = (area.width as usize).saturating_sub(label_width);
+    let title = if full_title.width() <= title_width {
+        full_title
+    } else {
+        name_title
+    };
+    let title = cell(&title, title_width);
     let line = Line::from(vec![
-        Span::styled(title_text, styles.title),
-        Span::raw(" "),
-        Span::styled(appearance, styles.muted),
+        Span::styled(title, styles.title),
+        Span::styled(format!(" {appearance}"), styles.muted),
     ]);
     frame.render_widget(Paragraph::new(line).style(styles.base), area);
 }
@@ -1630,7 +1630,7 @@ mod tests {
     use crate::theme::{Appearance, Depth, Theme};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use std::path::PathBuf;
+    use std::{fs, path::PathBuf};
 
     fn fixture() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2053,5 +2053,18 @@ mod tests {
             !text.contains("hunter2"),
             "secret value must never render: {text}"
         );
+    }
+
+    #[tokio::test]
+    async fn long_collection_path_keeps_full_theme_label() {
+        let root = tempfile::tempdir().unwrap();
+        let nested = root.path().join("a".repeat(180));
+        fs::create_dir_all(&nested).unwrap();
+        let collection = nested.join("collection.yml");
+        fs::copy(fixture(), &collection).unwrap();
+        let app = App::load(Some(&collection)).await;
+        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        app.render_to(&mut terminal).unwrap();
+        assert!(dump(terminal.backend().buffer()).contains("Graphite Honey"));
     }
 }

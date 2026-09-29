@@ -170,6 +170,59 @@ impl ThemeFile {
         })
     }
 
+    /// Parses an Omarchy colors.toml palette.
+    pub fn parse_omarchy(path: &Path, name: &str, text: &str) -> Result<Self, ThemeFileError> {
+        let document: toml::Value =
+            toml::from_str(text).map_err(|error| ThemeFileError::Parse {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+        let table = document.as_table().ok_or_else(|| ThemeFileError::Parse {
+            path: path.to_path_buf(),
+            message: "Omarchy colors.toml must be a TOML table".to_owned(),
+        })?;
+        let extends = table
+            .get("mode")
+            .and_then(toml::Value::as_str)
+            .and_then(Appearance::from_flag)
+            .unwrap_or(Appearance::Dark);
+        let mut palette = Palette::for_appearance(extends);
+        let mappings = [
+            ("accent", "accent"),
+            ("selection", "selection_active_bg"),
+            ("muted", "text_muted"),
+            ("background", "window_bg"),
+            ("dark_background", "sidebar_bg"),
+            ("lighter_background", "editor_bg"),
+            ("foreground", "text_primary"),
+            ("light_foreground", "text_secondary"),
+        ];
+        let mut overrides = 0;
+        for (source, target) in mappings {
+            let Some(value) = table.get(source).and_then(toml::Value::as_str) else {
+                continue;
+            };
+            let color = parse_hex(value).ok_or_else(|| ThemeFileError::InvalidField {
+                path: path.to_path_buf(),
+                field: source.to_owned(),
+                reason: format!("expected #rrggbb, got {value:?}"),
+            })?;
+            let _ = set_token(&mut palette, target, color);
+            overrides += 1;
+        }
+        if let Some(value) = table.get("selection").and_then(toml::Value::as_str)
+            && let Some(color) = parse_hex(value)
+        {
+            let _ = set_token(&mut palette, "selection_inactive_bg", color);
+        }
+        Ok(Self {
+            name: name.to_owned(),
+            extends,
+            palette,
+            overrides,
+        })
+    }
+
     /// Theme name (`name =` or the file stem).
     pub fn name(&self) -> &str {
         &self.name
@@ -301,6 +354,209 @@ pub fn resolve_theme_path(argument: &str) -> Result<PathBuf, ThemeFileError> {
     Ok(path)
 }
 
+/// Loads a named vendored Omarchy colors.toml palette.
+pub fn load_named(name: &str) -> Result<ThemeFile, ThemeFileError> {
+    let (path, text) = match name {
+        "hedron" => (
+            "themes/omarchy/hedron/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/hedron/colors.toml"
+            )),
+        ),
+        "hedron-light" => (
+            "themes/omarchy/hedron-light/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/hedron-light/colors.toml"
+            )),
+        ),
+        "catppuccin" => (
+            "themes/omarchy/catppuccin/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/catppuccin/colors.toml"
+            )),
+        ),
+        "catppuccin-latte" => (
+            "themes/omarchy/catppuccin-latte/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/catppuccin-latte/colors.toml"
+            )),
+        ),
+        "ethereal" => (
+            "themes/omarchy/ethereal/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/ethereal/colors.toml"
+            )),
+        ),
+        "everforest" => (
+            "themes/omarchy/everforest/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/everforest/colors.toml"
+            )),
+        ),
+        "flexoki-light" => (
+            "themes/omarchy/flexoki-light/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/flexoki-light/colors.toml"
+            )),
+        ),
+        "gruvbox" => (
+            "themes/omarchy/gruvbox/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/gruvbox/colors.toml"
+            )),
+        ),
+        "hackerman" => (
+            "themes/omarchy/hackerman/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/hackerman/colors.toml"
+            )),
+        ),
+        "kanagawa" => (
+            "themes/omarchy/kanagawa/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/kanagawa/colors.toml"
+            )),
+        ),
+        "last-horizon" => (
+            "themes/omarchy/last-horizon/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/last-horizon/colors.toml"
+            )),
+        ),
+        "lumon" => (
+            "themes/omarchy/lumon/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/lumon/colors.toml"
+            )),
+        ),
+        "lupine" => (
+            "themes/omarchy/lupine/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/lupine/colors.toml"
+            )),
+        ),
+        "matte-black" => (
+            "themes/omarchy/matte-black/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/matte-black/colors.toml"
+            )),
+        ),
+        "miasma" => (
+            "themes/omarchy/miasma/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/miasma/colors.toml"
+            )),
+        ),
+        "nord" => (
+            "themes/omarchy/nord/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/nord/colors.toml"
+            )),
+        ),
+        "osaka-jade" => (
+            "themes/omarchy/osaka-jade/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/osaka-jade/colors.toml"
+            )),
+        ),
+        "retro-82" => (
+            "themes/omarchy/retro-82/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/retro-82/colors.toml"
+            )),
+        ),
+        "ristretto" => (
+            "themes/omarchy/ristretto/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/ristretto/colors.toml"
+            )),
+        ),
+        "rose-pine" => (
+            "themes/omarchy/rose-pine/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/rose-pine/colors.toml"
+            )),
+        ),
+        "solitude" => (
+            "themes/omarchy/solitude/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/solitude/colors.toml"
+            )),
+        ),
+        "tokyo-night" => (
+            "themes/omarchy/tokyo-night/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/tokyo-night/colors.toml"
+            )),
+        ),
+        "vantablack" => (
+            "themes/omarchy/vantablack/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/vantablack/colors.toml"
+            )),
+        ),
+        "white" => (
+            "themes/omarchy/white/colors.toml",
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../themes/omarchy/white/colors.toml"
+            )),
+        ),
+        _ => {
+            return Err(ThemeFileError::Io {
+                path: PathBuf::from(name),
+                message: "unknown vendored theme".to_owned(),
+            });
+        }
+    };
+    ThemeFile::parse_omarchy(Path::new(path), name, text)
+}
+
+/// Reads the live Omarchy theme, when the desktop state exists.
+pub fn load_omarchy() -> Result<Option<ThemeFile>, ThemeFileError> {
+    let Some(home) = std::env::home_dir() else {
+        return Ok(None);
+    };
+    let root = home.join(".local/state/omarchy/current/theme");
+    let colors = root.join("colors.toml");
+    if !colors.is_file() {
+        return Ok(None);
+    }
+    let name = std::fs::read_to_string(root.join("../theme.name"))
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "omarchy".to_owned());
+    let text = std::fs::read_to_string(&colors).map_err(|error| ThemeFileError::Io {
+        path: colors.clone(),
+        message: error.to_string(),
+    })?;
+    ThemeFile::parse_omarchy(&colors, &name, &text).map(Some)
+}
+
 /// One entry of `facet theme list`: a built-in or a file on disk.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ThemeEntry {
@@ -335,6 +591,7 @@ pub fn list_themes() -> Vec<ThemeEntry> {
             error: None,
         },
     ];
+
     let Some(dir) = themes_dir() else {
         return entries;
     };
@@ -593,5 +850,83 @@ window_bg = "#101012"
         let theme = file.theme(Depth::Indexed);
         assert_eq!(theme.appearance(), Appearance::Dark);
         assert_eq!(theme.depth(), Depth::Indexed);
+    }
+
+    #[test]
+    fn omarchy_palette_maps_known_keys_and_keeps_missing_defaults() {
+        let file = ThemeFile::parse_omarchy(
+            Path::new("colors.toml"),
+            "Omahedron",
+            r##"mode = "light"
+accent = "#010203"
+foreground = "#040506"
+"##,
+        )
+        .unwrap();
+        assert_eq!(file.name(), "Omahedron");
+        assert_eq!(file.extends(), Appearance::Light);
+        assert_eq!(file.palette().accent, Color::Rgb(1, 2, 3));
+        assert_eq!(file.palette().text_primary, Color::Rgb(4, 5, 6));
+        assert_eq!(
+            file.palette().text_muted,
+            Palette::porcelain_honey().text_muted
+        );
+    }
+
+    #[test]
+    fn vendored_omarchy_theme_is_selectable() {
+        let theme = super::load_named("hedron").unwrap();
+        assert_eq!(theme.name(), "hedron");
+        assert_eq!(theme.extends(), Appearance::Dark);
+    }
+
+    #[test]
+    fn all_bundled_omarchy_themes_are_selectable() {
+        for name in [
+            "catppuccin",
+            "catppuccin-latte",
+            "ethereal",
+            "everforest",
+            "flexoki-light",
+            "gruvbox",
+            "hackerman",
+            "kanagawa",
+            "last-horizon",
+            "lumon",
+            "lupine",
+            "matte-black",
+            "miasma",
+            "nord",
+            "osaka-jade",
+            "retro-82",
+            "ristretto",
+            "rose-pine",
+            "solitude",
+            "tokyo-night",
+            "vantablack",
+            "white",
+            "hedron",
+            "hedron-light",
+        ] {
+            let theme = super::load_named(name).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(theme.name(), name);
+        }
+    }
+
+    #[test]
+    fn omarchy_priority_prefers_muted_and_foreground() {
+        let file = ThemeFile::parse_omarchy(
+            Path::new("colors.toml"),
+            "priority",
+            r##"mode = "dark"
+muted = "#010203"
+dark_foreground = "#040506"
+foreground = "#070809"
+bright_foreground = "#0a0b0c"
+"##,
+        )
+        .unwrap();
+        assert_eq!(file.palette().text_muted, Color::Rgb(1, 2, 3));
+        assert_eq!(file.palette().text_primary, Color::Rgb(7, 8, 9));
     }
 }

@@ -1,0 +1,242 @@
+opencollection: 1.0.0
+info:
+  name: GitHub (Halo agent)
+  summary: GitHub REST for Halo seats — replace gh api / curl. Secrets via facet env, never YAML.
+  version: 0.1.0
+bundled: true
+config:
+  environments:
+    - name: public
+      variables:
+        - name: githubApi
+          value: https://api.github.com
+        - name: userAgent
+          value: hedronite-facet-github
+        - name: owner
+          value: VirtualMachinist
+        - name: repo
+          value: facet
+        - name: contentPath
+          value: README.md
+        - name: pullNumber
+          value: "1"
+        - name: apiVersion
+          value: "2022-11-28"
+    - name: auth
+      variables:
+        - name: githubApi
+          value: https://api.github.com
+        - name: userAgent
+          value: hedronite-facet-github
+        - name: owner
+          value: VirtualMachinist
+        - name: repo
+          value: facet
+        - name: contentPath
+          value: README.md
+        - name: pullNumber
+          value: "1"
+        - name: apiVersion
+          value: "2022-11-28"
+        - name: githubToken
+          value: ""
+items:
+  - info:
+      name: Meta
+      type: folder
+      seq: 1
+    items:
+      - info:
+          name: Rate limit
+          type: http
+          seq: 1
+        http:
+          method: GET
+          url: "{{githubApi}}/rate_limit"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+      - info:
+          name: Authenticated user
+          type: http
+          seq: 2
+        http:
+          method: GET
+          url: "{{githubApi}}/user"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+            - name: Authorization
+              value: Bearer {{githubToken}}
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+  - info:
+      name: Repo
+      type: folder
+      seq: 2
+    items:
+      - info:
+          name: Get repo
+          type: http
+          seq: 1
+        http:
+          method: GET
+          url: "{{githubApi}}/repos/{{owner}}/{{repo}}"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+      - info:
+          name: Latest release
+          type: http
+          seq: 2
+        http:
+          method: GET
+          url: "{{githubApi}}/repos/{{owner}}/{{repo}}/releases/latest"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+      - info:
+          name: List commits
+          type: http
+          seq: 3
+        http:
+          method: GET
+          url: "{{githubApi}}/repos/{{owner}}/{{repo}}/commits"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+          params:
+            - name: per_page
+              value: "10"
+              type: query
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+      - info:
+          name: Get contents
+          type: http
+          seq: 4
+        http:
+          method: GET
+          url: "{{githubApi}}/repos/{{owner}}/{{repo}}/contents/{{contentPath}}"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+  - info:
+      name: Pulls
+      type: folder
+      seq: 3
+    items:
+      - info:
+          name: List pulls
+          type: http
+          seq: 1
+        http:
+          method: GET
+          url: "{{githubApi}}/repos/{{owner}}/{{repo}}/pulls"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+          params:
+            - name: state
+              value: open
+              type: query
+            - name: per_page
+              value: "20"
+              type: query
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+      - info:
+          name: Get pull
+          type: http
+          seq: 2
+        http:
+          method: GET
+          url: "{{githubApi}}/repos/{{owner}}/{{repo}}/pulls/{{pullNumber}}"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
+  - info:
+      name: Actions
+      type: folder
+      seq: 4
+    items:
+      - info:
+          name: List workflow runs
+          type: http
+          seq: 1
+        http:
+          method: GET
+          url: "{{githubApi}}/repos/{{owner}}/{{repo}}/actions/runs"
+          headers:
+            - name: Accept
+              value: application/vnd.github+json
+            - name: User-Agent
+              value: "{{userAgent}}"
+            - name: X-GitHub-Api-Version
+              value: "{{apiVersion}}"
+          params:
+            - name: per_page
+              value: "10"
+              type: query
+        settings:
+          timeout: 15000
+          followRedirects: true
+          maxRedirects: 3
