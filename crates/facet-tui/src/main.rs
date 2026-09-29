@@ -136,6 +136,7 @@ fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
         stdout,
         crossterm::terminal::EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableFocusChange,
         crossterm::cursor::Hide
     )?;
     let backend = CrosstermBackend::new(stdout);
@@ -149,6 +150,7 @@ fn restore_terminal() -> io::Result<()> {
         stdout,
         crossterm::terminal::LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableFocusChange,
         crossterm::cursor::Show
     )?;
     Ok(())

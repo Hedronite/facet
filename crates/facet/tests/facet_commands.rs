@@ -2187,6 +2187,8 @@ items:
     assert!(stdout.contains("\"source\":\"gh\""));
     assert!(!stdout.contains("gh-secret-token"));
     assert!(!source.contains("gh-secret-token"));
+    let rewritten = fs::read_to_string(&workspace).unwrap();
+    assert!(!rewritten.contains("gh-secret-token"));
     let db = rusqlite::Connection::open(sandbox.root().join(".facet/lattice.db")).unwrap();
     let headers: String = db
         .query_row("SELECT req_headers FROM runs LIMIT 1", [], |row| row.get(0))
