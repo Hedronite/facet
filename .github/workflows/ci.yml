@@ -34,8 +34,10 @@ jobs:
             clang \
             cmake
       - run: cargo fmt --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-targets --all-features
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --workspace --all-targets --all-features
+      - name: Doctests
+        run: cargo test --locked --workspace --all-features --doc
       # No tag on a PR, so gate the pair that exists: Cargo == `facet --version`.
       # The tag leg is enforced on release (.github/workflows/release.yml).
       - name: Version truth (Cargo == facet --version)

@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod diff;
+mod github;
 mod hydrate;
 mod transport;
 
@@ -16,6 +17,7 @@ pub use diff::{
     BodyDiff, BodySide, FieldChange, PROVENANCE_FIELDS, RunDiff, compare, diff_request_bodies,
     diff_response_bodies, unified_diff,
 };
+pub use github::{api_fallback, auth_token_for};
 pub use hydrate::{HydrateError, Hydration, overlay_secrets};
 pub use transport::{http_engine_from_env, http_engine_from_kubeconfig, kube_api_base_from_env};
 

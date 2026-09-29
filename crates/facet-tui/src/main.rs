@@ -45,6 +45,7 @@ fn main() -> ExitCode {
         if let Some(theme) = &cli.theme {
             app.apply_theme_file(theme);
         }
+        app.refresh_live_theme();
         let result = app.run(&mut terminal).await;
         if let Err(error) = result {
             eprintln!("facet-tui: {error}");

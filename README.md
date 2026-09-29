@@ -93,6 +93,15 @@ Full install guide (wrong-name traps, PATH, versions): **[docs/install.md](docs/
 
 TypeSafe / Jev System One recipes (Choice + Noul, shadow, `$TYPESAFE_API_KEY` via `facet env set`): **[docs/jev-native.md](docs/jev-native.md)** and [`docs/examples/typesafe/`](docs/examples/typesafe/).
 
+
+### TUI quick reference
+
+| Key or command | Action |
+|---|---|
+| `:open <path>` | Mount a collection without quitting |
+| `:recent` | Open recently recorded collections |
+| `?` | Show the complete keymap and command hints |
+
 ## What you get
 
 | | Upstream Probe | Facet (this repository) |

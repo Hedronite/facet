@@ -7,6 +7,12 @@ pub fn load_workspace(path: impl AsRef<Path>) -> Result<LoadedWorkspace, LoadErr
         source,
     })?;
     if canonical_path.is_dir() {
+        if let Some(config) = config_file(&canonical_path, "opencollection") {
+            let source = read_to_string(&config)?;
+            if parse(&source).is_ok_and(|parsed| parsed.is_bundled()) {
+                return load_bundled_source(&source, Some(&config));
+            }
+        }
         load_unbundled(&canonical_path)
     } else {
         load_bundled(&canonical_path)
