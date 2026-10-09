@@ -49,10 +49,9 @@ Facet-original surface on top of that core (see [docs/FACET.md](docs/FACET.md)):
 Folded from Probe's public roadmap
 ([rusty-probe.pages.dev](https://rusty-probe.pages.dev)): HTTP is live; next is
 WebSocket, GraphQL, gRPC streaming, custom themes, git integration, secret
-storage, and *and more*. Facet ships these independently where we already own
-the layer, and contributes shared core upstream. Protocol work in `probe-core`
-is written as an upstream PR; Facet TUI/CLI/Lattice adapters land in this tree
-in parallel.
+storage, and *and more*. Facet ships these in this tree first, including the
+shared protocol layer, and proposes the shared pieces to Probe upstream after
+they work here.
 
 ### Shipped (Facet)
 
@@ -66,25 +65,25 @@ in parallel.
 ### Why Probe 02–04 did not ship
 
 WebSocket, GraphQL, and gRPC are **protocol engines**, not Lattice work. They
-need a shared protocol-session / event abstraction in `probe-core` first
-(Thread A, parked on `repos/probe-upstream`). Facet's fork rule is
-cherry-pickable both ways: `probe-core` / `probe-cli` stay untouched except as
-an upstream PR. A Facet-only WS/GraphQL/gRPC stack against an HTTP-only core
-would fork the engine. The 2026-09-07 train ranked the week-1 HTTP loop
+need a shared protocol-session / event abstraction, which does not exist yet.
+The 2026-09-07 train ranked the week-1 HTTP loop
 (send → see → compare → send again) ahead of finishing Probe's numbered list.
-Unpark Thread A when Evan says; then core PR upstream, Facet JSONL + TUI
-session pane + Lattice events in this tree in parallel.
+Plan: build the protocol session/event layer and the WS/GraphQL/gRPC engines
+in Facet first, together with Facet JSONL, the TUI session pane, and Lattice
+events. Keep the layer free of Facet TUI/Lattice dependencies so it stays
+cherry-pickable into `probe-core`, then propose it upstream as a Probe PR.
 
 ### Next (Probe-aligned)
 
-Ship in Facet; offer the shared core upstream first when it touches
-`probe-core` / `probe-cli`. Thread A stays parked until unparked.
+Ship in Facet first. Protocol work (02–04) lands here and is proposed to Probe
+afterwards; other shared-core changes are still offered upstream first when they
+touch `probe-core` / `probe-cli`.
 
 | # | Item | Facet slice | Upstream |
 | --- | --- | --- | --- |
-| 02 | WebSocket | TUI session pane + Lattice events + `facet` JSONL | Protocol session/event abstraction in `probe-core` (**Thread A**) |
-| 03 | GraphQL | Collection item + TUI editor + history | Shared operation/variables model (**Thread A**) |
-| 04 | gRPC streaming | Same session adapter as WebSocket | Streaming on the protocol session (**Thread A**) |
+| 02 | WebSocket | TUI session pane + Lattice events + `facet` JSONL | After Facet: propose the protocol session/event layer to `probe-core` |
+| 03 | GraphQL | Collection item + TUI editor + history | After Facet: propose the shared operation/variables model |
+| 04 | gRPC streaming | Same session adapter as WebSocket | After Facet: propose streaming on the protocol session |
 | 06 | Git integration | Auto-tag `git:<sha>[-dirty]` on record; filesystem stays the Git boundary. No lazygit, no host UI. | No provider coupling in core |
 | 07 | Secret storage (rest) | TUI env editor on `facet env` / machine store; offer the resolve hook upstream | Probe desktop |
 
@@ -105,7 +104,7 @@ passes).
 
 **Probe contribution** (later, separate train): `--expect` + `--dry-run` on
 `probe request run`; secret-provider hook in `probe-core` (not Lattice);
-then Thread A (02–04) when unparked. Fresh branch off upstream `main`.
+then the protocol layer (02–04) once it works in Facet. Fresh branch off upstream `main`.
 
 MCP / harness adapter over Lattice must not parse CLI output. Engines stay
 rusqlite default; DuckDB ATTACH is `scripts/duckdb-attach-demo.sh`.
@@ -128,7 +127,8 @@ built-ins. Local presentation data, not OpenCollection content.
 
 #### Streaming protocols
 
-Shared protocol session/event abstraction before WebSocket, SSE, or gRPC.
+Shared protocol session/event abstraction before WebSocket, SSE, or gRPC, built
+in Facet first and designed so it can be upstreamed to Probe later.
 Implementations remain independent of stdin/stdout and any UI framework; the CLI
 adapts events to JSONL and the TUI renders sessions.
 
@@ -153,3 +153,4 @@ logic or depend on parsing CLI output.
 - Keep speculative provider integrations, cloud services, accounts, telemetry,
   analytics, plugins, and unsupported protocols out of scope until explicitly approved.
 - Facet-only work stays in Facet crates; shared-core fixes are offered upstream first.
+  Protocol work (WebSocket, GraphQL, gRPC) is the exception: Facet first, upstream after.

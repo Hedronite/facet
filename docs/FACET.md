@@ -175,15 +175,15 @@ Two trains. Finish the Facet-owned rest **before** pivoting to Probe.
 
 #### Probe contribution (later, separate)
 
-Give Probe the pieces we already shipped that belong in `probe-cli` / `probe-core`, then protocols. Fresh branch off upstream `main` — not the parked Thread A tree.
+Give Probe the pieces that belong in `probe-cli` / `probe-core`. Protocol work (02–04) is built in Facet first and proposed upstream after it works here. Fresh branch off upstream `main`.
 
 | # | Item | Notes |
 | --- | --- | --- |
 | A1 | `--expect` + `--dry-run` on `request run` | Exit **1** `expect_failed`; transport stays 6. Facet-only fallback already shipped. |
 | A2 | Secret-provider hook | Probe still errors `secret_variable_unavailable` with no `--var`. A host trait; do not push Lattice into Probe. |
-| B | Thread A — Probe 02–04 | WebSocket, GraphQL, gRPC. Need `protocol-session` in `probe-core` first. Facet JSONL + TUI session pane + Lattice events **after** the core PR exists. |
+| B | Probe 02–04 | WebSocket, GraphQL, gRPC streaming, and the shared protocol session/event layer. Build them in Facet first, with Facet JSONL, the TUI session pane, and Lattice events. Keep that layer free of Facet TUI/Lattice dependencies so it can be lifted into `probe-core`, then propose it upstream to Probe. |
 
-Do **not** ship 02–04 as Facet-only adapters against an HTTP-only core — that forks the engine.
+The shared layer stays independent of the Facet TUI and Lattice so it can move into `probe-core` without forking the engine.
 
 **Still not this product:** collection-in-Lattice, a writer daemon,
 kitchen-sink MCP writes, a JS test runner, Probe-shaped git hosting UI,
