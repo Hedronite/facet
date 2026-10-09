@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/VirtualMachinist/facet">
+  <a href="https://github.com/Hedronite/facet">
     <img src="assets/facet-logo.jpeg" alt="Facet" width="220">
   </a>
 </p>
@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/VirtualMachinist/facet/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/VirtualMachinist/facet/ci.yml?branch=main&style=flat&colorA=1A1A1A&colorB=C9A227&label=ci" alt="CI"></a>
-  <a href="https://github.com/VirtualMachinist/facet/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/Facet-v0.6.0-C9A227?style=flat&colorA=1A1A1A" alt="Facet v0.6.0"></a>
+  <a href="https://github.com/Hedronite/facet/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Hedronite/facet/ci.yml?branch=main&style=flat&colorA=1A1A1A&colorB=C9A227&label=ci" alt="CI"></a>
+  <a href="https://github.com/Hedronite/facet/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/Facet-v0.6.0-C9A227?style=flat&colorA=1A1A1A" alt="Facet v0.6.0"></a>
   <a href="https://crates.io/crates/facet-lattice"><img src="https://img.shields.io/crates/v/facet-lattice?style=flat&colorA=1A1A1A&colorB=C9A227" alt="facet-lattice on crates.io"></a>
   <a href="https://rustup.rs"><img src="https://img.shields.io/badge/Rust-1.95-F46623?style=flat&colorA=1A1A1A&logo=rust&logoColor=white" alt="Rust 1.95"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-C9A227?style=flat&colorA=1A1A1A" alt="License"></a>
@@ -35,10 +35,12 @@
 
 ---
 
-> **Status:** In production use as daily-driver / dogfood local-first API client (CLI/TUI + facet-lattice). Hardening: 0.6.0 on main; WebSocket/GraphQL/gRPC on the roadmap. Not a toy reference.
+> **Status:** In production use as daily-driver / dogfood local-first API client (CLI/TUI + facet-lattice). 0.6.0 released (Sep 29, 2026); WebSocket/GraphQL/gRPC on the roadmap. Not a toy reference.
 
 
 **Facet** is the terminal product: a `facet` CLI and Ratatui TUI on the same OpenCollection YAML as [Probe](https://github.com/crizant/probe). **[facet-lattice](https://crates.io/crates/facet-lattice)** is the run-history library underneath — SQLite for runs, bodies, timings, and sessions beside your YAML on disk.
+
+`facet mcp` serves the same commands as MCP tools over stdio.
 
 Collections stay YAML; Git stays the sync layer. No account or hosted control plane. The `facet` binary coexists with `probe` on `PATH`.
 
@@ -67,12 +69,12 @@ The Cargo package is **`facet-lattice`** (not `lattice` — that name on crates.
 
 The CLI is **not** `cargo install facet`. Pick one:
 
-**Release archive** (fastest): download from [GitHub Releases](https://github.com/VirtualMachinist/facet/releases), extract `facet`, add to `PATH`.
+**Release archive** (fastest): download from [GitHub Releases](https://github.com/Hedronite/facet/releases), extract `facet`, add to `PATH`.
 
 **From git** (Rust required):
 
 ```bash
-cargo install --git https://github.com/VirtualMachinist/facet --package facet-cli --bin facet
+cargo install --git https://github.com/Hedronite/facet --package facet-cli --bin facet
 ```
 
 **From a clone** (contributors): `cargo build --release -p probe-cli -p facet-cli` — see [docs/install.md](docs/install.md).
@@ -89,9 +91,22 @@ facet blob <sha256>
 facet tui
 ```
 
+More commands (`facet --help` for flags):
+
+| Command | What it does |
+|---|---|
+| `facet last [<path>]` | Newest matching run; prints its ULID (same filters as `history`) |
+| `facet pin <runId> --as <name>` | Name a run in the machine store (`pin get`, `pin list`, `pin delete`) |
+| `facet session start\|end\|list\|show` | Group runs into a session (use with `FACET_SESSION`) |
+| `facet replay <runId>` | Re-send a recorded run from the current YAML |
+| `facet diff <idA> <idB>` | Compare two recorded runs, hashes first (exit 1 if different) |
+| `facet theme check <path>` / `facet theme list` | Validate a `facet-tui` theme file; list built-in and discovered themes |
+| `facet ncl check\|export\|apply\|pack` | Check, export, apply, or pack Nickel (`.ncl`) configs, evaluated in-process |
+| `facet mcp` | Serve the same commands as MCP tools over stdio |
+
 Full install guide (wrong-name traps, PATH, versions): **[docs/install.md](docs/install.md)**.
 
-TypeSafe / Jev System One recipes (Choice + Noul, shadow, `$TYPESAFE_API_KEY` via `facet env set`): **[docs/jev-native.md](docs/jev-native.md)** and [`docs/examples/typesafe/`](docs/examples/typesafe/).
+Example collection for calling the TypeSafe API from `facet` (judge-style requests, API key stored with `facet env set --secret`): **[docs/jev-native.md](docs/jev-native.md)** and [`docs/examples/typesafe/`](docs/examples/typesafe/).
 
 
 ### TUI quick reference
@@ -120,7 +135,7 @@ Facet rebuilds the terminal and history layers; Probe owns the core domain and H
 **YAML holds the collection; facet-lattice holds the history.**
 
 - `.facet/lattice.db` beside your collection stores run history; a machine store holds secrets, sessions, and a cross-workspace index.
-- Agent commands (`history`, `blob`, `gc`) emit deterministic JSON. Large bodies are content-addressed.
+- Agent commands (`history`, `last`, `pin`, `session`, `replay`, `diff`, `blob`, `gc`) emit deterministic JSON. Large bodies are content-addressed.
 - Secrets use the OS keyring or XChaCha20-Poly1305 via `FACET_SECRET_KEY`.
 
 <details>
@@ -140,11 +155,12 @@ docs/FACET.md             # Facet contracts
 
 ## Status
 
-**0.6.0** on `main` (next release). The `facet-lattice` crate is a separate version axis and does not follow the CLI: [`facet-lattice` 0.5.9](https://crates.io/crates/facet-lattice) is live on crates.io, with 0.5.8 still up (no yank).
+**0.6.0** released (Sep 29, 2026). The `facet-lattice` crate is a separate version axis and does not follow the CLI: [`facet-lattice` 0.5.9](https://crates.io/crates/facet-lattice) is live on crates.io, with 0.5.8 still up (no yank).
 
 - **facet-lattice**: SQLite default. Scrubbed crate package published as **0.5.9**.
 - **CLI + TUI**: shipped. Deterministic JSON, SQL over history, Ratatui interface.
-- **Roadmap**: WebSocket, GraphQL, gRPC, theme files — [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+- **Themes**: user-defined theme files ship (`facet theme check|list`, [`themes/`](themes/)).
+- **Roadmap**: WebSocket, GraphQL, gRPC — [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 ## Contributing
 
