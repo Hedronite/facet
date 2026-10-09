@@ -59,7 +59,7 @@ in parallel.
 | Probe item | Facet |
 | --- | --- |
 | 01 HTTP requests | Live. Same engine as Probe. Lattice records every `request run` / TUI send. |
-| 05 Custom theme support | **Partial.** Graphite Honey (default) and Porcelain Honey, `:theme` toggle, `--appearance`. User-defined theme files are still open (see below). |
+| 05 Custom theme support | **Live.** Graphite Honey (default) and Porcelain Honey, `:theme` toggle, `--appearance`, plus user-defined theme files (`facet theme check\|list`, [docs/FACET.md](docs/FACET.md#theme-files)). |
 | 07 Secret storage | **At rest and hydrated.** OS keyring or `FACET_SECRET_KEY` XChaCha20-Poly1305; Lattice env overlay on `request run` / TUI send / `replay` (`facet env`). Probe desktop secret UX remains upstream. |
 | ··· And more | **Shipped 2026-09-07** (PRs #8–#13). Sessions, recall, TUI history grid, replay, hash-diff, overlay, `doctor`, `--expect` (exit **1**), `--dry-run`. See [docs/FACET.md](docs/FACET.md#shipped-2026-09-07-and-more). |
 
@@ -85,7 +85,6 @@ Ship in Facet; offer the shared core upstream first when it touches
 | 02 | WebSocket | TUI session pane + Lattice events + `facet` JSONL | Protocol session/event abstraction in `probe-core` (**Thread A**) |
 | 03 | GraphQL | Collection item + TUI editor + history | Shared operation/variables model (**Thread A**) |
 | 04 | gRPC streaming | Same session adapter as WebSocket | Streaming on the protocol session (**Thread A**) |
-| 05 | Custom themes (rest) | Versioned theme files for `facet-tui` | Probe desktop theme files remain upstream; Facet TUI theme rules are in [docs/FACET.md](docs/FACET.md#theme-files) |
 | 06 | Git integration | Auto-tag `git:<sha>[-dirty]` on record; filesystem stays the Git boundary. No lazygit, no host UI. | No provider coupling in core |
 | 07 | Secret storage (rest) | TUI env editor on `facet env` / machine store; offer the resolve hook upstream | Probe desktop |
 
@@ -101,7 +100,7 @@ passes).
 1. MCP — `facet mcp` stdio; tools over lattice + record + run; same JSON; no stdout parse
 2. Git HEAD auto-tag — `git:<sha>[-dirty]` on record; no column
 3. Bells — `facet last`, `:history` sparkline, pins
-4. Theme files — Probe 05 rest
+4. ~~Theme files — Probe 05 rest~~ (done: `facet theme check|list`)
 5. TUI env editor + `ctrl+u`/`ctrl+d` — Probe 07 rest + deferred Surface 2 scroll
 
 **Probe contribution** (later, separate train): `--expect` + `--dry-run` on
@@ -122,7 +121,7 @@ rusqlite default; DuckDB ATTACH is `scripts/duckdb-attach-demo.sh`.
 
 #### User-defined theme files
 
-Versioned, human-editable theme files after the semantic token model is stable.
+**Shipped.** Versioned, human-editable theme files (TOML) for `facet-tui`.
 Parsing and validation stay outside components; invalid themes fall back to
 built-ins. Local presentation data, not OpenCollection content.
 [docs/FACET.md](docs/FACET.md#theme-files).
