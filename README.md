@@ -21,6 +21,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
+  <a href="#agent-use">Agent use</a> ·
   <a href="docs/install.md">Install</a> ·
   <a href="#what-you-get">What you get</a> ·
   <a href="#how-it-works">How it works</a> ·
@@ -40,7 +41,7 @@
 
 **Facet** is the terminal product: a `facet` CLI and Ratatui TUI on the same OpenCollection YAML as [Probe](https://github.com/crizant/probe). **[facet-lattice](https://crates.io/crates/facet-lattice)** is the run-history library underneath — SQLite for runs, bodies, timings, and sessions beside your YAML on disk.
 
-`facet mcp` serves the same commands as MCP tools over stdio.
+Coding agents should use the bundled skill and the CLI ([Agent use](#agent-use)). `facet mcp` still serves the same commands as MCP tools over stdio.
 
 Collections stay YAML; Git stays the sync layer. No account or hosted control plane. The `facet` binary coexists with `probe` on `PATH`.
 
@@ -102,12 +103,38 @@ More commands (`facet --help` for flags):
 | `facet diff <idA> <idB>` | Compare two recorded runs, hashes first (exit 1 if different) |
 | `facet theme check <path>` / `facet theme list` | Validate a `facet-tui` theme file; list built-in and discovered themes |
 | `facet ncl check\|export\|apply\|pack` | Check, export, apply, or pack Nickel (`.ncl`) configs, evaluated in-process |
-| `facet mcp` | Serve the same commands as MCP tools over stdio |
+| `facet mcp` | Same commands as MCP tools over stdio; still shipped. Agents should prefer the [skill](#agent-use) |
 
 Full install guide (wrong-name traps, PATH, versions): **[docs/install.md](docs/install.md)**.
 
 Example collection for calling the TypeSafe API from `facet` (judge-style requests, API key stored with `facet env set --secret`): **[docs/jev-native.md](docs/jev-native.md)** and [`docs/examples/typesafe/`](docs/examples/typesafe/).
 
+<a id="agent-use"></a>
+
+## Agent use: skills + CLI first, MCP still shipped
+
+The default way for an agent to use this tool is the bundled skill in
+`skills/facet/`: a short `SKILL.md` the harness reads to decide when to use
+it, plus a Nushell body that calls the CLI with JSON output. The MCP server
+(`facet mcp`) is still built and shipped, and works the same as before.
+
+Why the skill is the default:
+
+- **Context.** An MCP server adds every tool's name, description and input
+  schema to the model's context, often on every request, whether or not the
+  tools are used. Many harnesses can only turn a whole server on or off. A
+  skill costs a few dozen tokens of description until it is used.
+- **Determinism.** The skill body is fixed code over a versioned JSON
+  contract, so results are the same each time.
+- **Small models.** Local models with short context windows feel the schema
+  cost most.
+
+Use the MCP server when your harness defers or filters MCP tool schemas
+(loading them only on demand, or letting you enable single tools), or when
+the client has no shell.
+
+Install the skill by copying or linking `skills/facet/` into your harness's
+skills directory (for example `~/.agents/skills/` or `~/.claude/skills/`).
 
 ### TUI quick reference
 
@@ -142,6 +169,7 @@ Facet rebuilds the terminal and history layers; Probe owns the core domain and H
 <summary><strong>Repository map</strong></summary>
 
 ```
+skills/facet/             # agent skill (SKILL.md + Nushell CLI wrapper)
 crates/facet/             # facet CLI binary (facet-cli)
 crates/lattice/           # facet-lattice library (crates.io)
 crates/facet-tui/         # Ratatui interface

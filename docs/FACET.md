@@ -734,6 +734,16 @@ The `[colors]` tokens, grouped as in `Palette`:
 | Response status | `response_informational` `response_success` `response_redirect` `response_client_error` `response_server_error` |
 | Syntax | `syntax_property` `syntax_string` `syntax_number` `syntax_boolean` `syntax_null` `syntax_punctuation` |
 
+### Agent skill
+
+The recommended way for a coding agent to use Facet is
+[`skills/facet`](../skills/facet/SKILL.md): `SKILL.md` plus `facet.nu`, which
+calls this CLI with `--json` after the subcommand. The wrapper is read-only.
+It covers `history` (no `--bodies`, `--id`, or `--sql`), `last`, `session list`,
+`session show`, `pin list`, `env list` (names only), `diff` (no `--bodies`),
+and `doctor`. It does not wrap `request run` (including `--dry-run`), `replay`,
+`blob`, or commands that write. `facet mcp` is unchanged; see below.
+
 ### `mcp`
 
 `facet mcp` serves the Facet commands as Model Context Protocol tools over
@@ -775,9 +785,11 @@ Claude Code (`.mcp.json`):
 { "mcpServers": { "facet": { "command": "facet", "args": ["mcp"], "env": { "FACET_ACTOR": "agent.alpha" } } } }
 ```
 
-The CLI remains the contract; the shell-out path in `docs/FACET.md` and the
-skill template need no MCP. Use `mcp` when a harness wants typed tools and
-`structuredContent` instead of parsing stdout.
+The CLI remains the contract. Prefer the skill in
+[`skills/facet`](../skills/facet/SKILL.md); it does not add tool schemas to
+context. Use `mcp` when a harness defers or filters tool schemas, or when the
+client has no shell. MCP still returns `structuredContent` identical to
+`facet <command> --json`.
 
 TypeSafe / Jev recipes use this same `request_run` path (1:1 with
 `facet request run`). Hydrate `typesafeApiKey` with `facet env set --secret`
