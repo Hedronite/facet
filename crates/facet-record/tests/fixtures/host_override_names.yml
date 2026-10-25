@@ -16,6 +16,10 @@ config:
           value: __COLLECTION_URL__
         - name: serverurl
           value: __COLLECTION_URL__
+        - name: path
+          value: //__COLLECTION_AUTHORITY__/secret
+        - name: suffix
+          value: /secret
         - secret: true
           name: token
           type: string
@@ -67,6 +71,26 @@ items:
     http:
       method: GET
       url: "{{serverurl}}/secret"
+      headers:
+        - name: X-Token
+          value: "{{token}}"
+  - info:
+      name: Secret via scheme-relative path
+      type: http
+      seq: 6
+    http:
+      method: GET
+      url: "http:{{path}}"
+      headers:
+        - name: X-Token
+          value: "{{token}}"
+  - info:
+      name: Secret via path suffix
+      type: http
+      seq: 7
+    http:
+      method: GET
+      url: "{{apiUrl}}{{suffix}}"
       headers:
         - name: X-Token
           value: "{{token}}"
