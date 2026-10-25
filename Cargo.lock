@@ -1369,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "facet-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "crossterm 0.29.0",
  "facet-lattice",
@@ -1410,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "facet-record"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "facet-lattice",
@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "facet-tui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "crossterm 0.29.0",
@@ -1746,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "hedron-ncl"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "nickel-lang-core",
  "serde",

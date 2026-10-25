@@ -61,7 +61,7 @@ The `facet` executable is **not** on crates.io as a one-line `cargo install`. Us
 ```bash
 export PATH="$HOME/.local/bin:$PATH"   # if needed
 facet --version
-# facet 0.6.0 (probe 0.5.9)
+# facet 0.7.0 (probe 0.5.9)
 ```
 
 ### From git (Rust toolchain required)
@@ -73,7 +73,7 @@ cargo install --git https://github.com/VirtualMachinist/facet --package facet-cl
 facet --version
 ```
 
-This compiles from `main` (or pass `--tag v0.6.0` to match a release). Expect a longer build than downloading a release archive.
+This compiles from `main` (or pass `--tag v0.7.0` to match a release). Expect a longer build than downloading a release archive.
 
 ### From a cloned repo (contributors)
 
@@ -92,7 +92,7 @@ facet --version
 ## Verify install
 
 ```bash
-facet --version          # human: facet 0.6.0 (probe 0.5.9)
+facet --version          # human: facet 0.7.0 (probe 0.5.9)
 facet --version --json   # structured version + probeVersion
 facet doctor --json      # machine + workspace stores, secrets backend, env flags
 ```
@@ -106,11 +106,11 @@ to be true.
 
 | Artifact | Source | Version |
 | --- | --- | --- |
-| `facet` CLI / `facet-tui` / `facet-record` | `[workspace.package].version`, GitHub release tag | **0.6.0** (when tagged) |
+| `facet` CLI / `facet-tui` / `facet-record` | `[workspace.package].version`, GitHub release tag | **0.7.0** (when tagged) |
 | `facet-lattice` crate | [crates.io](https://crates.io/crates/facet-lattice) | **0.5.9** live (0.5.8 also up) |
 | `probe-*` crates | vendored Probe cut, pinned per crate | **0.5.9** |
 
-`facet --version` prints the first and third together: `facet 0.6.0 (probe 0.5.9)`.
+`facet --version` prints the first and third together: `facet 0.7.0 (probe 0.5.9)`.
 The `facet-lattice` crate is never bumped to match the CLI, and the probe crates
 are never bumped to make that parenthetical look symmetrical. **0.5.8** stays on
 crates.io (no yank). `scripts/version-check.sh` is the gate that keeps the git
