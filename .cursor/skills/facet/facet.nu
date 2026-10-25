@@ -1,12 +1,12 @@
 #!/usr/bin/env nu
 # Deterministic, read-only body for the facet skill.
-# allow-flags: --limit --request --status --session --open --environment --json
+# allow-flags: --limit --request --status --session --open --environment --id --sql --strict-variables --json
 # `--json` is appended after the subcommand. The first token selects Facet
 # or Probe, so `facet --json <command>` never reaches these commands.
 # Flag-like arguments are refused. Commands that are not wrapped are listed
 # in SKILL.md.
 
-const allowed_flags = ["--limit" "--request" "--status" "--session" "--open" "--environment"]
+const allowed_flags = ["--limit" "--request" "--status" "--session" "--open" "--environment" "--id" "--sql" "--strict-variables"]
 
 def clip [text: string] {
   let flat = ($text | lines | str join " " | str trim)
@@ -105,8 +105,9 @@ def fail [command: string, r: record] {
   let base = {
     ok: false
     command: $command
-    error: (clip ([$r.stderr $r.stdout] | str join " "))
     exit: $r.exit_code
+    stderr: (clip $r.stderr)
+    error: (clip ([$r.stderr $r.stdout] | str join " "))
   }
   if $data == null { $base } else { $base | insert data $data }
 }
@@ -202,6 +203,62 @@ def "main diff" [a: string, b: string, path: string = ""] {
     fail "diff" $r
   } else {
     { ok: true, command: "diff", same: ($r.exit_code == 0), data: $data }
+  } | emit
+}
+
+def "main requests" [path: string = ""] {
+  envelope "requests" ["request" "list" "."] $path | emit
+}
+
+def "main request" [
+  selector: string
+  path: string = ""
+  --environment: string = ""
+  --strict-variables
+] {
+  if ($selector | is-empty) {
+    fail "request" { stdout: "", stderr: "request requires <selector>", exit_code: 2, refused: true }
+  } else {
+    let args = (
+      ["request" "get" "." $selector]
+      ++ (opt "--environment" $environment)
+      ++ (if $strict_variables { ["--strict-variables"] } else { [] })
+    )
+    envelope "request" $args $path
+  } | emit
+}
+
+def "main history-get" [id: string, path: string = ""] {
+  if ($id | is-empty) {
+    fail "history-get" { stdout: "", stderr: "history-get requires <id>", exit_code: 2, refused: true }
+  } else {
+    envelope "history-get" ["history" "--id" $id] $path
+  } | emit
+}
+
+def "main sql" [query: string, path: string = ""] {
+  if ($query | is-empty) {
+    fail "sql" { stdout: "", stderr: "sql requires <query>", exit_code: 2, refused: true }
+  } else {
+    envelope "sql" ["history" "--sql" $query] $path
+  } | emit
+}
+
+def absolute [p: string] { $p | path expand }
+
+def "main ncl-check" [module: string, path: string = ""] {
+  if ($module | is-empty) {
+    fail "ncl-check" { stdout: "", stderr: "ncl-check requires <module>", exit_code: 2, refused: true }
+  } else {
+    envelope "ncl-check" ["ncl" "check" (absolute $module)] $path
+  } | emit
+}
+
+def "main ncl-export" [module: string, path: string = ""] {
+  if ($module | is-empty) {
+    fail "ncl-export" { stdout: "", stderr: "ncl-export requires <module>", exit_code: 2, refused: true }
+  } else {
+    envelope "ncl-export" ["ncl" "export" (absolute $module)] $path
   } | emit
 }
 

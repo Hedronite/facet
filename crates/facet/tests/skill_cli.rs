@@ -69,8 +69,6 @@ fn skill_source_stays_on_the_safe_command_set() {
 
     for denied in [
         "--bodies",
-        "--id",
-        "--sql",
         "--value",
         "--dry-run",
         "--output",
@@ -83,6 +81,7 @@ fn skill_source_stays_on_the_safe_command_set() {
         "blob",
         "replay",
         "request run",
+        "ncl apply",
         "updatedAt",
     ] {
         assert!(
@@ -109,6 +108,13 @@ fn skill_source_stays_on_the_safe_command_set() {
         "\"env\"",
         "\"diff\"",
         "\"doctor\"",
+        "\"ncl\"",
+        "\"check\"",
+        "\"export\"",
+        "\"--id\"",
+        "\"--sql\"",
+        "\"get\"",
+        "stderr:",
         "project-names",
     ] {
         assert!(source.contains(command), "missing {command}");
@@ -122,6 +128,16 @@ fn skill_source_stays_on_the_safe_command_set() {
         "history --sql",
         "diff --bodies",
         "request run",
+        "request list",
+        "request get",
+        "ncl check",
+        "ncl export",
+        "ncl apply",
+        "session start",
+        "session end",
+        "env set",
+        "env delete",
+        "sql_read_only",
         "--dry-run",
         "blob",
         "names only",
@@ -129,6 +145,7 @@ fn skill_source_stays_on_the_safe_command_set() {
         "FACET_ACTOR",
         "human",
         "ok: false",
+        "stderr",
         "opencollection.yml",
         ".facet/lattice.db",
     ] {

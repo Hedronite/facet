@@ -1,10 +1,11 @@
 ---
 name: facet
 description: >
-  Inspect Facet HTTP request history, sessions, pins, and stored-value
-  names through the facet CLI. Use when a task needs to know what requests
-  ran, their status and timing, or to compare two runs. Prefer this skill over
-  the facet MCP server: it adds no tool schemas to context.
+  Read a Facet collection, its requests, run history, sessions, pins, and
+  stored-value names through the facet CLI. Use when a task needs request
+  metadata, a recorded run, a read-only SQL query, a Nickel check or export,
+  or a comparison of two runs. Prefer this skill over the facet MCP server:
+  it adds no tool schemas to context.
 ---
 
 # facet — request history skill
@@ -30,29 +31,45 @@ an actor name.
 
 ## Commands
 
+On failure the envelope is `ok: false` and includes `exit` and `stderr`.
+
 ```bash
+nu facet.nu requests [path]
+nu facet.nu request <selector> [path] [--environment e] [--strict-variables]
 nu facet.nu history [path] [--limit 20] [--request sel] [--status 200] [--session id]
+nu facet.nu history-get <id> [path]          # history --id, no bodies
 nu facet.nu last [path] [--request sel]
+nu facet.nu sql <query> [path]               # history --sql, read-only
 nu facet.nu sessions [path] [--open]
 nu facet.nu session <id|current> [path]
 nu facet.nu pins [path]
-nu facet.nu env [path] [--environment e]   # names only, never values
-nu facet.nu diff <idA> <idB> [path]        # hash-first; no body text
-nu facet.nu doctor [path]                  # exit 1 is warnings, still a result
+nu facet.nu env [path] [--environment e]     # names only, never values
+nu facet.nu diff <idA> <idB> [path]          # hash-first; no body text
+nu facet.nu ncl-check <module> [path]
+nu facet.nu ncl-export <module> [path]
+nu facet.nu doctor [path]                    # exit 1 is warnings, still a result
 ```
 
 | Skill | CLI |
 | --- | --- |
+| `requests` | `facet request list .` after `cd` |
+| `request` | `facet request get . <selector> [--environment <name>] [--strict-variables]` after `cd` |
 | `history` | `facet history --limit <n> --request <selector> --status <code> --session <id\|current>` after `cd` |
+| `history-get` | `facet history --id <ulid>` after `cd`, with no `--bodies` |
 | `last` | `facet last --request <selector>` after `cd` |
+| `sql` | `facet history --sql <query>` after `cd` |
 | `sessions` | `facet session list [--open]` after `cd` into the collection |
 | `session` | `facet session show <id\|current>` after `cd` into the collection |
 | `pins` | `facet pin list` after `cd` into the collection |
 | `env` | `facet env list [--environment <name>]` after `cd`, then `{environment, name}` only |
 | `diff` | `facet diff <idA> <idB>` after `cd`, with no `--bodies` |
+| `ncl-check` | `facet ncl check <module>` after `cd` |
+| `ncl-export` | `facet ncl export <module>` after `cd` |
 | `doctor` | `facet doctor` after `cd` into the collection |
 
 `history` always sends `--limit`. The skill default is 20. The CLI default, when `--limit` is omitted, is 50. `--status` is one HTTP status code (`200`), not a class (`2xx`). `--session current` reads `FACET_SESSION`.
+
+`history --id` returns the recorded run with body size and hash, not body text. `history --sql` is read-only: the CLI opens the workspace store on a read-only connection and rejects a statement that is not read-only (`sql_read_only`). The machine store is not attached. Text columns come back as stored; blob values come back as a size.
 
 `diff` sets `same: false` when the CLI exits 1 (the runs differ). That is a result, and the body text is not included. `doctor` sets `healthy: false` when the CLI exits 1 for warnings; the JSON document is still returned.
 
@@ -60,7 +77,11 @@ nu facet.nu doctor [path]                  # exit 1 is warnings, still a result
 
 ## Not wrapped, on purpose
 
-- `history --bodies`, `history --id`, `blob`, `diff --bodies`: these can print recorded request or response bodies and headers, which may carry tokens.
-- `history --sql`: not wrapped. It is an open query, not a fixed metadata read.
-- `request run`, including `--dry-run`: a preview resolves variables, so it can show a hydrated secret. A real run also sends traffic.
-- `replay`, `env set`, `env delete`, `pin` (create or delete), `gc --yes`, `session start`, `session end`: these change state or send traffic. Run them only when a human has explicitly asked, and never pass a secret value on the command line.
+- `request run`, including `--dry-run`: sends traffic, and dry-run can hydrate secrets.
+- `replay`: sends traffic, and dry-run can hydrate secrets.
+- `ncl apply`: writes.
+- `session start` and `session end`: writes.
+- `blob`: bodies may hold secrets.
+- `env set` and `env delete`: writes.
+- `pin` create and `pin delete`: writes.
+- `history --bodies` and `diff --bodies`: bodies may hold secrets.
