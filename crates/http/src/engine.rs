@@ -30,7 +30,7 @@ impl HttpEngine {
     /// Creates an engine with the default redirect policy.
     pub fn new() -> Result<Self, HttpError> {
         Ok(Self {
-            default_client: build_client(true, DEFAULT_MAX_REDIRECTS, None)?,
+            default_client: build_client(true, DEFAULT_MAX_REDIRECTS, None, false)?,
             cluster_tls: None,
         })
     }
@@ -40,7 +40,7 @@ impl HttpEngine {
     /// request model, persisted history, or presentation output.
     pub fn with_cluster_tls(cluster_tls: ClusterTls) -> Result<Self, HttpError> {
         Ok(Self {
-            default_client: build_client(true, DEFAULT_MAX_REDIRECTS, Some(&cluster_tls))?,
+            default_client: build_client(true, DEFAULT_MAX_REDIRECTS, Some(&cluster_tls), false)?,
             cluster_tls: Some(cluster_tls),
         })
     }
@@ -80,7 +80,7 @@ impl HttpEngine {
     where
         C: Future + Send,
     {
-        self.execute_with_cancellation(request, options, None, cancellation)
+        self.execute_with_cancellation(request, options, None, false, cancellation)
             .await
     }
 
@@ -95,7 +95,36 @@ impl HttpEngine {
     where
         C: Future + Send,
     {
-        self.execute_with_cancellation(request, options, Some(output), cancellation)
+        self.execute_with_cancellation(request, options, Some(output), false, cancellation)
+            .await
+    }
+
+    /// Secret-request send: no redirects and no proxy environment.
+    pub async fn execute_cancellable_locked<C>(
+        &self,
+        request: &HttpRequest,
+        options: &ExecutionOptions,
+        cancellation: C,
+    ) -> Result<HttpResponse, HttpError>
+    where
+        C: Future + Send,
+    {
+        self.execute_with_cancellation(request, options, None, true, cancellation)
+            .await
+    }
+
+    /// Secret-request send to a file: no redirects and no proxy environment.
+    pub async fn execute_cancellable_to_file_locked<C>(
+        &self,
+        request: &HttpRequest,
+        options: &ExecutionOptions,
+        output: &Path,
+        cancellation: C,
+    ) -> Result<HttpResponse, HttpError>
+    where
+        C: Future + Send,
+    {
+        self.execute_with_cancellation(request, options, Some(output), true, cancellation)
             .await
     }
 
@@ -104,6 +133,7 @@ impl HttpEngine {
         request: &HttpRequest,
         options: &ExecutionOptions,
         output: Option<&Path>,
+        lock_transport: bool,
         cancellation: C,
     ) -> Result<HttpResponse, HttpError>
     where
@@ -113,7 +143,7 @@ impl HttpEngine {
         tokio::select! {
             biased;
             _ = &mut cancellation => Err(HttpError::Cancelled),
-            response = self.execute_inner(request, options, output) => response,
+            response = self.execute_inner(request, options, output, lock_transport) => response,
         }
     }
 
@@ -122,8 +152,9 @@ impl HttpEngine {
         request: &HttpRequest,
         options: &ExecutionOptions,
         output: Option<&Path>,
+        lock_transport: bool,
     ) -> Result<HttpResponse, HttpError> {
-        let client = self.client_for(&request.settings)?;
+        let client = self.client_for(&request.settings, lock_transport)?;
         let builder = build_request(&client, request, options).await?;
         let built = builder.build().map_err(map_reqwest_error)?;
         if let Some(tls) = &self.cluster_tls {
@@ -182,13 +213,26 @@ impl HttpEngine {
         })
     }
 
-    fn client_for(&self, settings: &RequestSettings) -> Result<Cow<'_, Client>, HttpError> {
+    fn client_for(
+        &self,
+        settings: &RequestSettings,
+        lock_transport: bool,
+    ) -> Result<Cow<'_, Client>, HttpError> {
+        if lock_transport {
+            return build_client(
+                false,
+                DEFAULT_MAX_REDIRECTS,
+                self.cluster_tls.as_ref(),
+                true,
+            )
+            .map(Cow::Owned);
+        }
         let follow = settings.follow_redirects.unwrap_or(true);
         let maximum = settings.max_redirects.unwrap_or(DEFAULT_MAX_REDIRECTS);
         if follow && maximum == DEFAULT_MAX_REDIRECTS {
             Ok(Cow::Borrowed(&self.default_client))
         } else {
-            build_client(follow, maximum, self.cluster_tls.as_ref()).map(Cow::Owned)
+            build_client(follow, maximum, self.cluster_tls.as_ref(), false).map(Cow::Owned)
         }
     }
 }
@@ -197,6 +241,7 @@ fn build_client(
     follow_redirects: bool,
     maximum: usize,
     cluster_tls: Option<&ClusterTls>,
+    no_proxy: bool,
 ) -> Result<Client, HttpError> {
     let policy = if !follow_redirects {
         Policy::none()
@@ -218,12 +263,14 @@ fn build_client(
         Policy::limited(maximum)
     };
     let mut builder = Client::builder().redirect(policy);
+    if cluster_tls.is_some() || no_proxy {
+        builder = builder.no_proxy();
+    }
     if let Some(tls) = cluster_tls {
         builder = builder
             .tls_certs_only(tls.roots.clone())
             .identity(tls.identity.clone())
-            .tls_sslkeylogfile(false)
-            .no_proxy();
+            .tls_sslkeylogfile(false);
     }
     builder
         .build()

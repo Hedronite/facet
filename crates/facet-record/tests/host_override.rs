@@ -27,6 +27,8 @@ use serde_json::{Value, json};
 const STORE_MARK: &str = "h13-store-canary";
 const TOKEN: &str = "h13-token-canary-not-a-credential";
 const SECRET_KEY: &str = "h13-master-key-canary";
+const USER_MARK: &str = "h13-user-canary";
+const PASS_MARK: &str = "h13-pass-canary";
 
 /// `facet` built from this workspace into the target dir and profile running
 /// this test. `cargo build` is a no-op when it is fresh and rebuilds when
@@ -90,7 +92,13 @@ struct Host {
 
 impl Host {
     fn spawn() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+        Self::spawn_at("127.0.0.1:0")
+    }
+
+    /// A host on another loopback address (`[::1]:0`): a different host by
+    /// address, whatever the port.
+    fn spawn_at(address: &str) -> Self {
+        let listener = TcpListener::bind(address).expect("loopback listener");
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (sender, requests) = mpsc::channel();
         thread::spawn(move || {
@@ -168,14 +176,26 @@ struct Sandbox {
 
 impl Sandbox {
     fn new(collection_url: &str) -> Self {
+        Self::with_fixture("host_override.yml", collection_url)
+    }
+
+    /// `fixture` under `tests/fixtures/`, with `__COLLECTION_URL__` and
+    /// `__COLLECTION_AUTHORITY__` (the URL without its scheme) filled in.
+    fn with_fixture(fixture: &str, collection_url: &str) -> Self {
         let dir = tempfile::tempdir().expect("temporary directory");
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/host_override.yml");
-        let source = std::fs::read_to_string(fixture).expect("fixture");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(fixture);
+        let source = std::fs::read_to_string(path).expect("fixture");
+        let authority = collection_url
+            .strip_prefix("http://")
+            .expect("loopback hosts are http");
         let workspace = dir.path().join("workspace.yml");
         std::fs::write(
             &workspace,
-            source.replace("__COLLECTION_URL__", collection_url),
+            source
+                .replace("__COLLECTION_URL__", collection_url)
+                .replace("__COLLECTION_AUTHORITY__", authority),
         )
         .unwrap();
         Self {
@@ -183,6 +203,8 @@ impl Sandbox {
             workspace,
             canaries: vec![
                 STORE_MARK.to_owned(),
+                USER_MARK.to_owned(),
+                PASS_MARK.to_owned(),
                 TOKEN.to_owned(),
                 SECRET_KEY.to_owned(),
             ],
@@ -272,10 +294,14 @@ impl Sandbox {
 
     /// A store host row whose value carries the canary mark.
     fn store_host(&mut self, name: &str, host: &Host) -> String {
-        let value = format!("{}/{STORE_MARK}", host.url);
-        self.env_set(name, &value, false);
-        self.canaries.insert(0, value.clone());
-        value
+        self.store_value(name, &format!("{}/{STORE_MARK}", host.url))
+    }
+
+    /// A plain store row with an arbitrary value, kept out of all output.
+    fn store_value(&mut self, name: &str, value: &str) -> String {
+        self.env_set(name, value, false);
+        self.canaries.insert(0, value.to_owned());
+        value.to_owned()
     }
 
     fn request(&self, item: &str, extra: &[&str], json: bool) -> Run {
@@ -285,6 +311,57 @@ impl Sandbox {
             arguments.push("--json");
         }
         self.run(&arguments)
+    }
+
+    /// The refusal oracle: `host_override_refused` naming `name`, a non-zero
+    /// exit in JSON and human output, no request at any of `hosts`, and no
+    /// canary in the output or in what the run left in Lattice.
+    fn assert_refused(&self, what: &str, item: &str, extra: &[&str], name: &str, hosts: &[&Host]) {
+        let run = self.request(item, extra, true);
+        self.assert_clean(what, &run.stdout);
+        self.assert_clean(what, &run.stderr);
+        let code = run.code.expect("facet should exit, not be signalled");
+        assert_ne!(code, 0, "{what}: the refusal must exit non-zero");
+        let envelope = self.json(what, &run);
+        let error = &envelope["error"];
+        assert_eq!(
+            error["category"],
+            "host_override_refused",
+            "{what}: {}",
+            self.scrub(&envelope.to_string())
+        );
+        assert_eq!(error["exitCode"], json!(code), "{what}");
+        assert_eq!(error["details"], json!({ "variable": name }), "{what}");
+        assert!(
+            error["message"].as_str().unwrap_or_default().contains(name),
+            "{what}: the message names the variable"
+        );
+        for host in hosts {
+            host.untouched(what);
+        }
+
+        // Human output fails the same way and is just as clean.
+        let human = self.request(item, extra, false);
+        self.assert_clean(what, &human.stdout);
+        self.assert_clean(what, &human.stderr);
+        assert_eq!(human.code, Some(code), "{what}: human exit");
+        for host in hosts {
+            host.untouched(what);
+        }
+
+        // Nothing the refusal left in Lattice carries the value either.
+        let history = self.run(&["history", self.ws(), "--json"]);
+        self.assert_clean(what, &history.stdout);
+        self.assert_clean(what, &history.stderr);
+        let dump = self.run(&[
+            "history",
+            self.ws(),
+            "--sql",
+            "SELECT url, req_headers, error FROM runs",
+            "--json",
+        ]);
+        self.assert_clean(what, &dump.stdout);
+        self.assert_clean(what, &dump.stderr);
     }
 
     fn json(&self, what: &str, run: &Run) -> Value {
@@ -317,49 +394,121 @@ fn secret_request_refuses_store_host_row() {
                 Token::Var => &["--var", &var],
             };
 
-            let run = sandbox.request(item, extra, true);
-            sandbox.assert_clean(&what, &run.stdout);
-            sandbox.assert_clean(&what, &run.stderr);
-            let code = run.code.expect("facet should exit, not be signalled");
-            assert_ne!(code, 0, "{what}: the refusal must exit non-zero");
-            let envelope = sandbox.json(&what, &run);
-            let error = &envelope["error"];
-            assert_eq!(
-                error["category"],
-                "host_override_refused",
-                "{what}: {}",
-                sandbox.scrub(&envelope.to_string())
-            );
-            assert_eq!(error["exitCode"], json!(code), "{what}");
-            assert_eq!(error["details"], json!({ "variable": name }), "{what}");
-            assert!(
-                error["message"].as_str().unwrap_or_default().contains(name),
-                "{what}: the message names the variable"
-            );
-            store.untouched(&what);
-            collection.untouched(&what);
+            sandbox.assert_refused(&what, item, extra, name, &[&store, &collection]);
+        }
+    }
+}
 
-            // Human output fails the same way and is just as clean.
-            let human = sandbox.request(item, extra, false);
-            sandbox.assert_clean(&what, &human.stdout);
-            sandbox.assert_clean(&what, &human.stderr);
-            assert_eq!(human.code, Some(code), "{what}: human exit");
-            store.untouched(&what);
-            collection.untouched(&what);
+/// Runs `case` once with the token from the store and once from `--var`.
+fn for_each_token(mut case: impl FnMut(Token, &[&str], &mut Sandbox), fixture: &str, url: &str) {
+    let var = format!("token={TOKEN}");
+    for token in [Token::Store, Token::Var] {
+        let mut sandbox = Sandbox::with_fixture(fixture, url);
+        let extra: &[&str] = match token {
+            Token::Store => {
+                sandbox.env_set("token", TOKEN, true);
+                &[]
+            }
+            Token::Var => &["--var", &var],
+        };
+        case(token, extra, &mut sandbox);
+    }
+}
 
-            // Nothing the refusal left in Lattice carries the value either.
-            let history = sandbox.run(&["history", sandbox.ws(), "--json"]);
-            sandbox.assert_clean(&what, &history.stdout);
-            sandbox.assert_clean(&what, &history.stderr);
-            let dump = sandbox.run(&[
-                "history",
-                sandbox.ws(),
-                "--sql",
-                "SELECT url, req_headers, error FROM runs",
-                "--json",
-            ]);
-            sandbox.assert_clean(&what, &dump.stdout);
-            sandbox.assert_clean(&what, &dump.stderr);
+#[test]
+fn secret_request_refuses_store_host_under_any_variable_name() {
+    // `{{apiUrl}}/…` and `http://{{host}}/…`: no `baseUrl` or `serverUrl`
+    // in sight, and the store row still must not move the host.
+    let cases = [("items/0", "apiUrl", false), ("items/1", "host", true)];
+    for (item, name, authority_only) in cases {
+        let collection = Host::spawn();
+        let store = Host::spawn_at("[::1]:0");
+        for_each_token(
+            |token, extra, sandbox| {
+                let what = format!("{name} with token from {token:?}");
+                if authority_only {
+                    let authority = store.url.strip_prefix("http://").unwrap();
+                    sandbox.store_value(name, authority);
+                } else {
+                    sandbox.store_host(name, &store);
+                }
+                sandbox.assert_refused(&what, item, extra, name, &[&store, &collection]);
+            },
+            "host_override_names.yml",
+            &collection.url,
+        );
+    }
+}
+
+#[test]
+fn secret_request_refuses_store_host_under_case_variants() {
+    // Names that differ from `serverUrl` / `baseUrl` only by case.
+    for (item, name) in [
+        ("items/2", "ServerURL"),
+        ("items/3", "BASEURL"),
+        ("items/4", "serverurl"),
+    ] {
+        let collection = Host::spawn();
+        let store = Host::spawn_at("[::1]:0");
+        for_each_token(
+            |token, extra, sandbox| {
+                let what = format!("{name} with token from {token:?}");
+                sandbox.store_host(name, &store);
+                sandbox.assert_refused(&what, item, extra, name, &[&store, &collection]);
+            },
+            "host_override_names.yml",
+            &collection.url,
+        );
+    }
+
+    // An upper-case DNS name that is not the collection's host.
+    for (fixture, item, name) in [
+        ("host_override.yml", "items/0", "serverUrl"),
+        ("host_override_names.yml", "items/0", "apiUrl"),
+    ] {
+        let collection = Host::spawn();
+        let store = Host::spawn();
+        let port = store.url.rsplit(':').next().unwrap();
+        for_each_token(
+            |token, extra, sandbox| {
+                let what = format!("{name} as LOCALHOST with token from {token:?}");
+                sandbox.store_value(name, &format!("http://LOCALHOST:{port}/{STORE_MARK}"));
+                sandbox.assert_refused(&what, item, extra, name, &[&store, &collection]);
+            },
+            fixture,
+            &collection.url,
+        );
+    }
+}
+
+#[test]
+fn secret_request_refuses_store_host_with_userinfo() {
+    for (fixture, item, name) in [
+        ("host_override.yml", "items/0", "serverUrl"),
+        ("host_override.yml", "items/1", "baseUrl"),
+        ("host_override_names.yml", "items/0", "apiUrl"),
+    ] {
+        let collection = Host::spawn();
+        let store = Host::spawn_at("[::1]:0");
+        let collection_authority = collection.url.strip_prefix("http://").unwrap();
+        let store_authority = store.url.strip_prefix("http://").unwrap();
+        // Same host as the collection, userinfo added; then userinfo that
+        // spells the collection host in front of a different one.
+        let values = [
+            format!("http://{USER_MARK}:{PASS_MARK}@{collection_authority}/{STORE_MARK}"),
+            format!("http://{USER_MARK}@{collection_authority}/{STORE_MARK}"),
+            format!("http://{collection_authority}@{store_authority}/{STORE_MARK}"),
+        ];
+        for (index, value) in values.iter().enumerate() {
+            for_each_token(
+                |token, extra, sandbox| {
+                    let what = format!("{name} userinfo case {index} with token from {token:?}");
+                    sandbox.store_value(name, value);
+                    sandbox.assert_refused(&what, item, extra, name, &[&store, &collection]);
+                },
+                fixture,
+                &collection.url,
+            );
         }
     }
 }

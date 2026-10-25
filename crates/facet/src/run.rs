@@ -103,7 +103,11 @@ pub(crate) fn run(args: &[String], stdin: &mut impl Read) -> Result<CommandOutpu
     if dry_run {
         return Ok(dry_run_output(&request, &hydration, environment.is_some()));
     }
-    let execution = execute(&request, input.base_directory(), output.as_deref())?;
+    let execution = if hydration.references_secret {
+        execute_locked(&request, input.base_directory(), output.as_deref())?
+    } else {
+        execute(&request, input.base_directory(), output.as_deref())?
+    };
     let status = execution
         .result
         .as_ref()
@@ -314,6 +318,24 @@ pub(crate) fn execute(
     base_directory: Option<PathBuf>,
     output: Option<&Path>,
 ) -> Result<Execution, FacetError> {
+    execute_transport(request, base_directory, output, false)
+}
+
+/// Secret-request send: redirects off, proxy environment ignored.
+pub(crate) fn execute_locked(
+    request: &HttpRequest,
+    base_directory: Option<PathBuf>,
+    output: Option<&Path>,
+) -> Result<Execution, FacetError> {
+    execute_transport(request, base_directory, output, true)
+}
+
+fn execute_transport(
+    request: &HttpRequest,
+    base_directory: Option<PathBuf>,
+    output: Option<&Path>,
+    lock_transport: bool,
+) -> Result<Execution, FacetError> {
     let options = ExecutionOptions {
         base_directory,
         ..ExecutionOptions::default()
@@ -328,7 +350,22 @@ pub(crate) fn execute(
     let clock = Instant::now();
     let mut result = runtime.block_on(async {
         let engine = engine?;
-        if let Some(output) = output {
+        if lock_transport {
+            if let Some(output) = output {
+                engine
+                    .execute_cancellable_to_file_locked(
+                        request,
+                        &options,
+                        output,
+                        tokio::signal::ctrl_c(),
+                    )
+                    .await
+            } else {
+                engine
+                    .execute_cancellable_locked(request, &options, tokio::signal::ctrl_c())
+                    .await
+            }
+        } else if let Some(output) = output {
             engine
                 .execute_cancellable_to_file(request, &options, output, tokio::signal::ctrl_c())
                 .await

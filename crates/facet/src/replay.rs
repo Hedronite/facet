@@ -21,8 +21,8 @@ use crate::{
     CommandOutput, FacetError, args,
     expect::{EXPECT_FAIL_TAG, Expectation},
     run::{
-        execute, hydrate, lookup_request, parse_vars, render, resolve_selected, var_names,
-        with_secrets,
+        execute, execute_locked, hydrate, lookup_request, parse_vars, render, resolve_selected,
+        var_names, with_secrets,
     },
     workspace::{WorkspaceInput, load, open_store, overrides_from_parsed},
 };
@@ -145,7 +145,11 @@ pub(crate) fn replay(args: &[String], stdin: &mut impl Read) -> Result<CommandOu
     }
 
     // 5. Send and record with lineage.
-    let execution = execute(&request, input.base_directory(), None)?;
+    let execution = if hydration.references_secret {
+        execute_locked(&request, input.base_directory(), None)?
+    } else {
+        execute(&request, input.base_directory(), None)?
+    };
     let status = execution
         .result
         .as_ref()

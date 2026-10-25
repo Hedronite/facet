@@ -3015,7 +3015,7 @@ impl App {
 
     /// The request to send plus the secret values hydrated into it, which the
     /// recorder scrubs from stored text.
-    fn prepared_request_with_redact(&self) -> Result<(HttpRequest, Vec<String>), String> {
+    fn prepared_request_with_redact(&self) -> Result<(HttpRequest, Vec<String>, bool), String> {
         let Some((_, request)) = self.selected_request() else {
             return Err("no request selected".to_string());
         };
@@ -3023,10 +3023,10 @@ impl App {
         build_update(&self.method, &self.editor).apply(&mut prepared);
         if let Some(index) = self.active_environment {
             let Some(entry) = self.environments.get(index) else {
-                return Ok((prepared, Vec::new()));
+                return Ok((prepared, Vec::new(), false));
             };
             let Some(loaded) = self.loaded.as_ref() else {
-                return Ok((prepared, Vec::new()));
+                return Ok((prepared, Vec::new(), false));
             };
             // Secret hydration (Goal 5): Lattice environment values overlay
             // as overrides before resolve, same path as the CLI.
@@ -3046,16 +3046,16 @@ impl App {
             )
             .map_err(|error| error.to_string())?;
             prepared = resolve_request(&prepared, &resolved).map_err(|error| error.to_string())?;
-            return Ok((prepared, hydration.redact));
+            return Ok((prepared, hydration.redact, hydration.references_secret));
         }
-        Ok((prepared, Vec::new()))
+        Ok((prepared, Vec::new(), false))
     }
 
     async fn run_selected(&mut self) -> Result<(), TuiError> {
         if self.pending.is_some() {
             return Ok(());
         }
-        let (request, redact) = match self.prepared_request_with_redact() {
+        let (request, redact, lock_transport) = match self.prepared_request_with_redact() {
             Ok(prepared) => prepared,
             Err(message) => {
                 self.status = RunStatus::Failed(message);
@@ -3094,18 +3094,23 @@ impl App {
             let engine = facet_record::http_engine_from_env();
             let outcome = match engine {
                 Ok(engine) => {
-                    engine
-                        .execute_cancellable(&request, &options, async move {
-                            loop {
-                                if *cancel_signal.borrow() {
-                                    return;
-                                }
-                                if cancel_signal.changed().await.is_err() {
-                                    return;
-                                }
+                    let cancel = async move {
+                        loop {
+                            if *cancel_signal.borrow() {
+                                return;
                             }
-                        })
-                        .await
+                            if cancel_signal.changed().await.is_err() {
+                                return;
+                            }
+                        }
+                    };
+                    if lock_transport {
+                        engine
+                            .execute_cancellable_locked(&request, &options, cancel)
+                            .await
+                    } else {
+                        engine.execute_cancellable(&request, &options, cancel).await
+                    }
                 }
                 Err(error) => Err(error),
             };
