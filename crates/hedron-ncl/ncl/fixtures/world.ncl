@@ -11,7 +11,7 @@ let World = import "../contracts/world.ncl" in
       spec = {
         kind = "docs_eod",
         date = "2026-09-12",
-        required_briefs = [ "foundry/hedronetes/CHECKLIST-nickel" ],
+        required_briefs = [ "docs/CHECKLIST-nickel" ],
       },
     },
   ],

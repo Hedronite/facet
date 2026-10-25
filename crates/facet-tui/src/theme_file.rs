@@ -813,7 +813,7 @@ window_bg = "#101012"
         // break this binary.
         let theme = ThemeFile::parse(
             path(),
-            "version = 1\nextends = \"graphite\"\nauthor = \"evan\"\n",
+            "version = 1\nextends = \"graphite\"\nauthor = \"example\"\n",
         )
         .unwrap();
         assert_eq!(theme.extends(), Appearance::Dark);

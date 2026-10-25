@@ -49,11 +49,42 @@ See also [crates/lattice/README.md](../crates/lattice/README.md) and [Lattice en
 
 ## facet (CLI binary)
 
-The `facet` executable is **not** on crates.io as a one-line `cargo install`. Use a release archive, a git install, or a source build.
+The `facet` executable is **not** on crates.io as a one-line `cargo install facet`. The Cargo package is `facet-cli`; the installed binary is `facet`.
 
-### From a GitHub release (recommended)
+### From the v0.7.0 tag (primary)
 
-1. Open [Facet releases](https://github.com/VirtualMachinist/facet/releases).
+Requires a Rust toolchain. This installs the `facet` binary from package `facet-cli` at the release tag:
+
+```bash
+cargo install --git https://github.com/Hedronite/facet --tag v0.7.0 --locked --bin facet facet-cli
+facet --version
+# facet 0.7.0 (probe 0.5.9)
+```
+
+### From main (secondary)
+
+Builds the current `main` branch:
+
+```bash
+cargo install --git https://github.com/Hedronite/facet --locked --bin facet facet-cli
+facet --version
+```
+
+Or from a clone. Requires Rust **1.95** or newer:
+
+```bash
+git clone https://github.com/Hedronite/facet.git
+cd facet
+cargo build --release -p probe-cli -p facet-cli
+export PATH="$PWD/target/release:$PATH"
+facet --version
+```
+
+`probe` builds alongside `facet` and can coexist on `PATH`.
+
+### From a GitHub release archive
+
+1. Open [Facet releases](https://github.com/Hedronite/facet/releases).
 2. Download the archive for your platform (`facet-cli-<version>-<platform>.tar.gz`).
 3. Extract the `facet` binary.
 4. Move it onto your `PATH` (e.g. `~/.local/bin` or `/usr/local/bin`).
@@ -63,31 +94,6 @@ export PATH="$HOME/.local/bin:$PATH"   # if needed
 facet --version
 # facet 0.7.0 (probe 0.5.9)
 ```
-
-### From git (Rust toolchain required)
-
-Builds the `facet` binary from this repository (package `facet-cli`):
-
-```bash
-cargo install --git https://github.com/VirtualMachinist/facet --package facet-cli --bin facet
-facet --version
-```
-
-This compiles from `main` (or pass `--tag v0.7.0` to match a release). Expect a longer build than downloading a release archive.
-
-### From a cloned repo (contributors)
-
-Requires Rust **1.95** or newer:
-
-```bash
-git clone https://github.com/VirtualMachinist/facet.git
-cd facet
-cargo build --release -p probe-cli -p facet-cli
-export PATH="$PWD/target/release:$PATH"
-facet --version
-```
-
-`probe` builds alongside `facet` and can coexist on `PATH`.
 
 ## Verify install
 

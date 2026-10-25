@@ -10,7 +10,7 @@ edition = "2021"
 license.workspace = true
 rust-version.workspace = true
 publish = true
-repository = "https://github.com/VirtualMachinist/facet"
+repository = "https://github.com/Hedronite/facet"
 description = "Nickel contract pack for h3s / Facet / HedronDB: platform law, versioned release overlays, generated predicates"
 
 [lints]

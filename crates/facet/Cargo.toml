@@ -18,8 +18,7 @@ facet-tui = { path = "../facet-tui" }
 facet-lattice = { path = "../lattice" }
 # The only Nickel VM on the platform: in-process, never a `nickel` subprocess.
 hedron-ncl = { path = "../hedron-ncl" }
-# ~/Projects/hedrondb for local work; path layout is not required to build.
-# Git pin so GHA can resolve without a sibling clone (PR #28 CI).
+# Git pin so CI can resolve without a sibling clone (PR #28 CI).
 hedron-core = { git = "https://github.com/VirtualMachinist/hedrondb.git", rev = "3167d09032473b0f9f16ec73beed871e68100904" }
 serde_yaml = "0.9"
 rusqlite = { version = "0.40", features = ["bundled"] }

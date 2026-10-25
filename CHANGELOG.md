@@ -21,6 +21,9 @@ Changes since v0.6.0 (`7547ebe`, 2026-09-29).
   still render as a size. The authorizer also denies pragma writes,
   `load_extension`, and the raw page virtual tables `sqlite_dbpage` and
   `sqlite_dbdata`. `ATTACH` and `DETACH` were already denied.
+  0.6.0 returned secret column text through `history --sql`, so users who
+  exported or shared `history --sql` output from 0.6.0 should treat it as
+  potentially containing secrets and rotate as needed. Upgrade to 0.7.0.
 
 ### Added
 
