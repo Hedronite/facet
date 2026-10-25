@@ -6,4 +6,30 @@
 ignore = [
   # Review by 2026-12-31 (cargo-deny has no expiry field, so the date lives in this comment).
   { id = "RUSTSEC-2024-0436", reason = "paste is an unmaintained proc-macro with no known vulnerability. It comes in via nickel-lang-core 0.18 (through hedron-ncl). nickel-lang-core 0.19 (released 2026-09-17) drops paste; bumping hedron-ncl to it is a separate follow-up that can remove this ignore. Review by 2026-12-31." },
+
+  # Review by 2027-01-31. No patched release exists (RUSTSEC-2024-0449).
+  # `cargo tree -i unsafe-libyaml`:
+  #   unsafe-libyaml v0.2.11
+  #   ├── serde_yaml v0.9.34+deprecated
+  #   │   ├── facet-cli
+  #   │   ├── hedron-core (git pin)
+  #   │   └── nickel-lang-core v0.18.0 → hedron-ncl
+  #   └── serde_yaml_ng v0.10.0
+  #       ├── facet-record
+  #       ├── probe-opencollection
+  #       └── probe-yaak
+  { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is an archived c2rust port of libyaml with no patched release. serde_yaml 0.9.34 (facet-cli, hedron-core, nickel-lang-core 0.18 via hedron-ncl) and serde_yaml_ng 0.10.0 (facet-record, probe-opencollection, probe-yaak) both still depend on it. Replacing the OpenCollection YAML stack and those git/Nickel pins with a safe parser is not a small, behavior-preserving change. Review by 2027-01-31." },
+
+  # Review by 2027-01-31. Folded into zbus 6; no standalone upgrade (RUSTSEC-2026-0370/0371/0372).
+  # `cargo tree -i zvariant` / `zvariant_derive` / `zbus_names` all end at:
+  #   zbus v5.19.0
+  #   ├── secret-service v5.2.0
+  #   │   └── zbus-secret-service-keyring-store v1.0.1
+  #   │       └── keyring v4.2.0
+  #   │           └── facet-lattice
+  #   └── zbus-secret-service-keyring-store v1.0.1 (*)
+  #   zbus_macros v5.19.0 → zbus v5.19.0 (*)
+  { id = "RUSTSEC-2026-0370", reason = "zvariant was merged into zbus 6 and has no patched standalone release. The only path is keyring 4.2.0 -> zbus-secret-service-keyring-store 1.0.1 -> secret-service 5.2.0 / zbus 5.19.0 (and zbus_macros). keyring 4.2.0 and secret-service 5.2.0 still require zbus 5. Review by 2027-01-31." },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names was merged into zbus 6 and has no patched standalone release. The only path is keyring 4.2.0 -> zbus-secret-service-keyring-store 1.0.1 -> secret-service 5.2.0 / zbus 5.19.0 (and zbus_macros). keyring 4.2.0 and secret-service 5.2.0 still require zbus 5. Review by 2027-01-31." },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive was merged into zbus 6 and has no patched standalone release. It is only used by zvariant 5.14.0, which arrives via keyring 4.2.0 -> zbus-secret-service-keyring-store 1.0.1 -> zbus 5.19.0. keyring 4.2.0 and secret-service 5.2.0 still require zbus 5. Review by 2027-01-31." },
 ]
