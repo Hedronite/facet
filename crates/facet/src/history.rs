@@ -442,6 +442,7 @@ fn sql_output(store: &WorkspaceStore, result: lattice::SqlResult) -> CommandOutp
             "workspace": workspace_json(store),
             "columns": result.columns,
             "rows": rows,
+            "redactedColumns": result.redacted_columns,
         }),
     )
 }

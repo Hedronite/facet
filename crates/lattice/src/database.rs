@@ -2,10 +2,19 @@
 //!
 //! SQL, migrations, bodies and application semantics stay in store/machine.
 
-use std::{fs, io::Write, ops::Deref, path::Path, time::Duration};
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::Write,
+    ops::Deref,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use rusqlite::{
     ToSql,
+    hooks::{AuthAction, AuthContext, Authorization},
     types::{FromSql, FromSqlError, ToSqlOutput, Value, ValueRef},
 };
 
@@ -42,15 +51,16 @@ impl Connection {
         conn.busy_timeout(Duration::from_millis(config.busy_timeout_ms))?;
         if read_only {
             conn.pragma_update(None, "query_only", true)?;
-            // ATTACH is considered read-only by SQLite, even with a
-            // comment prefix. Authorize the parsed action, not a token.
-            conn.authorizer(Some(|ctx: rusqlite::hooks::AuthContext<'_>| {
-                match ctx.action {
-                    rusqlite::hooks::AuthAction::Attach { .. }
-                    | rusqlite::hooks::AuthAction::Detach { .. } => {
-                        rusqlite::hooks::Authorization::Deny
-                    }
-                    _ => rusqlite::hooks::Authorization::Allow,
+            // Replaced by [`Connection::install_sql_authorizer`] for `--sql`.
+            // This default still blocks ATTACH on any other read-only open.
+            conn.authorizer(Some(|ctx: AuthContext<'_>| {
+                if matches!(
+                    ctx.action,
+                    AuthAction::Attach { .. } | AuthAction::Detach { .. }
+                ) {
+                    Authorization::Deny
+                } else {
+                    Authorization::Allow
                 }
             }))?;
         } else if config.wal {
@@ -81,6 +91,21 @@ impl Connection {
         match self {
             Self::Sqlite(conn) => Ok(Statement::Sqlite(conn.prepare_cached(sql)?)),
         }
+    }
+
+    /// Authorizer for `history --sql`. Secret columns are read as NULL.
+    /// ATTACH, load_extension, and pragma writes are denied.
+    pub(crate) fn install_sql_authorizer(&self) -> Result<SqlAuthorizer> {
+        let redacted = Arc::new(Mutex::new(BTreeSet::new()));
+        let recorded = Arc::clone(&redacted);
+        match self {
+            Self::Sqlite(conn) => {
+                conn.authorizer(Some(move |ctx: AuthContext<'_>| {
+                    authorize_sql(ctx, &recorded)
+                }))?;
+            }
+        }
+        Ok(SqlAuthorizer { redacted })
     }
 
     pub(crate) fn prepare_read_only(&self, sql: &str) -> Result<Statement<'_>> {
@@ -119,6 +144,172 @@ impl Connection {
             committed: false,
         })
     }
+}
+
+/// Columns the `--sql` authorizer reads as NULL.
+///
+/// Workspace `runs`: bodies and headers. `req_body` was dropped in migration
+/// 0002; it stays listed so a store that still has the column cannot return it.
+/// Blob *files* are not columns (`blobs` stores hash, length, and content type).
+///
+/// Machine-store `environments`: plain values and secret references. That
+/// database is not attached (`ATTACH` is denied). The names are still matched
+/// so a visible table of the same shape cannot return them.
+///
+/// `runs.url` and `runs.var_names` are not listed: recording scrubs secrets
+/// out of the URL, and `var_names` stores names only.
+const SECRET_SQL_COLUMNS: &[(&str, &str)] = &[
+    ("runs", "req_body"),
+    ("runs", "res_body"),
+    ("runs", "req_headers"),
+    ("runs", "res_headers"),
+    ("environments", "value"),
+    ("environments", "secret_ref"),
+];
+
+/// Raw page virtual tables. Column `Ignore` does not cover their `data` blob.
+const RAW_PAGE_TABLES: &[&str] = &["sqlite_dbpage", "sqlite_dbdata"];
+
+/// Read pragmas whose parenthesized argument is not an assignment.
+const READ_PRAGMAS_WITH_ARG: &[&str] = &[
+    "table_info",
+    "table_xinfo",
+    "index_info",
+    "index_xinfo",
+    "index_list",
+    "foreign_key_list",
+    "foreign_key_check",
+    "table_list",
+];
+
+/// Pragmas that write or checkpoint even with no `= value`.
+const WRITE_PRAGMAS: &[&str] = &[
+    "optimize",
+    "wal_checkpoint",
+    "incremental_vacuum",
+    "writable_schema",
+];
+
+/// Source columns a `--sql` statement caused SQLite to read as NULL.
+pub(crate) struct SqlAuthorizer {
+    redacted: Arc<Mutex<BTreeSet<String>>>,
+}
+
+impl SqlAuthorizer {
+    /// `table.column`, sorted, one entry per secret column the statement read.
+    pub(crate) fn columns(&self) -> Vec<String> {
+        self.redacted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
+    }
+}
+
+fn authorize_sql(ctx: AuthContext<'_>, redacted: &Mutex<BTreeSet<String>>) -> Authorization {
+    match ctx.action {
+        AuthAction::Read {
+            table_name,
+            column_name,
+        } => authorize_read(table_name, column_name, redacted),
+        AuthAction::Function { function_name }
+            if function_name.eq_ignore_ascii_case("load_extension") =>
+        {
+            Authorization::Deny
+        }
+        AuthAction::Pragma {
+            pragma_name,
+            pragma_value,
+        } if pragma_writes(pragma_name, pragma_value) => Authorization::Deny,
+        AuthAction::Attach { .. }
+        | AuthAction::Detach { .. }
+        | AuthAction::AlterTable { .. }
+        | AuthAction::Analyze { .. }
+        | AuthAction::CreateIndex { .. }
+        | AuthAction::CreateTable { .. }
+        | AuthAction::CreateTempIndex { .. }
+        | AuthAction::CreateTempTable { .. }
+        | AuthAction::CreateTempTrigger { .. }
+        | AuthAction::CreateTempView { .. }
+        | AuthAction::CreateTrigger { .. }
+        | AuthAction::CreateView { .. }
+        | AuthAction::CreateVtable { .. }
+        | AuthAction::Delete { .. }
+        | AuthAction::DropIndex { .. }
+        | AuthAction::DropTable { .. }
+        | AuthAction::DropTempIndex { .. }
+        | AuthAction::DropTempTable { .. }
+        | AuthAction::DropTempTrigger { .. }
+        | AuthAction::DropTempView { .. }
+        | AuthAction::DropTrigger { .. }
+        | AuthAction::DropView { .. }
+        | AuthAction::DropVtable { .. }
+        | AuthAction::Insert { .. }
+        | AuthAction::Reindex { .. }
+        | AuthAction::Update { .. } => Authorization::Deny,
+        // Bundled SQLite has no load_extension action code. An unknown code
+        // from another build is denied rather than treated as a read.
+        AuthAction::Unknown { .. } => Authorization::Deny,
+        _ => Authorization::Allow,
+    }
+}
+
+fn authorize_read(
+    table_name: &str,
+    column_name: &str,
+    redacted: &Mutex<BTreeSet<String>>,
+) -> Authorization {
+    // `SELECT count(*)` reads the table once with an empty column name.
+    if column_name.is_empty() {
+        return Authorization::Allow;
+    }
+    let table = base_ident(table_name);
+    if RAW_PAGE_TABLES
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(table))
+    {
+        return Authorization::Deny;
+    }
+    let column = base_ident(column_name);
+    if !SECRET_SQL_COLUMNS
+        .iter()
+        .any(|(secret_table, secret_column)| {
+            secret_table.eq_ignore_ascii_case(table) && secret_column.eq_ignore_ascii_case(column)
+        })
+    {
+        return Authorization::Allow;
+    }
+    // SQLITE_IGNORE substitutes NULL for this column reference wherever it
+    // appears: aliases, functions, CTEs, subqueries, and views.
+    if let Ok(mut guard) = redacted.lock() {
+        guard.insert(format!(
+            "{}.{}",
+            table.to_ascii_lowercase(),
+            column.to_ascii_lowercase()
+        ));
+        Authorization::Ignore
+    } else {
+        Authorization::Deny
+    }
+}
+
+fn base_ident(name: &str) -> &str {
+    name.rsplit_once('.').map(|(_, tail)| tail).unwrap_or(name)
+}
+
+fn pragma_writes(name: &str, value: Option<&str>) -> bool {
+    if WRITE_PRAGMAS
+        .iter()
+        .any(|pragma| pragma.eq_ignore_ascii_case(name))
+    {
+        return true;
+    }
+    // `PRAGMA name = value` is a write. `PRAGMA table_info(runs)` is not.
+    value.is_some()
+        && !READ_PRAGMAS_WITH_ARG
+            .iter()
+            .any(|pragma| pragma.eq_ignore_ascii_case(name))
 }
 
 /// Never infer Turso compatibility from a SQLite header. Legacy unmarked files
