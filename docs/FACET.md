@@ -747,7 +747,7 @@ or a path inside it; otherwise it walks up for those files or `.facet/lattice.db
 It exports `FACET_ACTOR`, using the CLI default `human` when the variable is
 unset or empty. On failure the envelope includes `exit` and `stderr`. It
 covers `request list`, `request get`, `history` (no `--bodies`), `history --id`
-(no `--bodies`), `history --sql` (read-only; writes fail with `sql_read_only`),
+(no `--bodies`), `history --sql` (read-only; secret columns are NULL; writes fail with `sql_read_only`),
 `last`, `session list`, `session show`, `pin list`, `env list` (names only),
 `diff` (no `--bodies`), `ncl check`, `ncl export`, and `doctor`. It does not
 wrap `request run` (including `--dry-run`), `replay`, `ncl apply`,

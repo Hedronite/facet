@@ -815,7 +815,7 @@ pub(crate) fn tool_descriptions() -> Vec<Value> {
         ),
         tool(
             "sql_query",
-            "Read-only SQL over the workspace store (runs, blobs). Writes fail with sql_read_only. The machine store is never attached.",
+            "Read-only SQL over the workspace store (runs, blobs). Body, header, and environment secret columns are NULL. Writes fail with sql_read_only. The machine store is never attached.",
             schema(
                 json!({
                     "sql": string("One SELECT statement"),

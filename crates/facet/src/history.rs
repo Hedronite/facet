@@ -424,33 +424,17 @@ fn parse_json_or(source: Option<&str>, fallback: Value) -> Value {
         .unwrap_or(fallback)
 }
 
-/// Body and header columns hold the same secret-bearing text as `blob` and
-/// `history --bodies`. SQL reports a size for them and does not return the text.
-const REDACTED_SQL_COLUMNS: &[&str] = &["req_body", "res_body", "req_headers", "res_headers"];
-
-fn redacted_sql_column(name: &str) -> bool {
-    REDACTED_SQL_COLUMNS
-        .iter()
-        .any(|column| column.eq_ignore_ascii_case(name))
-}
-
 fn sql_output(store: &WorkspaceStore, result: lattice::SqlResult) -> CommandOutput {
     let mut lines = vec![result.columns.join("\t")];
     let mut rows = Vec::with_capacity(result.rows.len());
     for row in &result.rows {
         lines.push(
             row.iter()
-                .zip(&result.columns)
-                .map(|(value, column)| sql_cell_human(column, value))
+                .map(sql_value_human)
                 .collect::<Vec<_>>()
                 .join("\t"),
         );
-        rows.push(Value::Array(
-            row.iter()
-                .zip(&result.columns)
-                .map(|(value, column)| sql_cell_json(column, value))
-                .collect(),
-        ));
+        rows.push(Value::Array(row.iter().map(sql_value_json).collect()));
     }
     CommandOutput::new(
         format!("{}\n", lines.join("\n")),
@@ -458,37 +442,9 @@ fn sql_output(store: &WorkspaceStore, result: lattice::SqlResult) -> CommandOutp
             "workspace": workspace_json(store),
             "columns": result.columns,
             "rows": rows,
+            "redactedColumns": result.redacted_columns,
         }),
     )
-}
-
-fn sql_cell_json(column: &str, value: &SqlValue) -> Value {
-    if let Some(bytes) = redacted_len(column, value) {
-        json!({ "redacted": true, "bytes": bytes })
-    } else {
-        sql_value_json(value)
-    }
-}
-
-fn sql_cell_human(column: &str, value: &SqlValue) -> String {
-    if let Some(bytes) = redacted_len(column, value) {
-        format!("<redacted {bytes} bytes>")
-    } else {
-        sql_value_human(value)
-    }
-}
-
-/// Byte length of a body or header value. `None` means the cell is not redacted
-/// (a null, or a column that is not body or header text).
-fn redacted_len(column: &str, value: &SqlValue) -> Option<usize> {
-    if !redacted_sql_column(column) {
-        return None;
-    }
-    match value {
-        SqlValue::Text(text) => Some(text.len()),
-        SqlValue::Blob(bytes) => Some(bytes.len()),
-        SqlValue::Null | SqlValue::Integer(_) | SqlValue::Real(_) => None,
-    }
 }
 
 fn sql_value_json(value: &SqlValue) -> Value {

@@ -238,8 +238,10 @@ pub struct Blob {
 pub struct SqlResult {
     /// Column names in select order.
     pub columns: Vec<String>,
-    /// Rows of SQLite values.
+    /// Rows of SQLite values. Secret columns are NULL.
     pub rows: Vec<Vec<Value>>,
+    /// `table.column` for each secret column this statement read, sorted.
+    pub redacted_columns: Vec<String>,
 }
 
 /// What `gc` found or did.
@@ -565,8 +567,13 @@ impl WorkspaceStore {
     }
 
     /// Runs one read-only SQL statement on a separate read-only connection.
+    ///
+    /// Secret columns (`runs` bodies and headers, `environments.value` and
+    /// `environments.secret_ref`) are NULL wherever the statement references
+    /// them. `redacted_columns` names the ones this statement read.
     pub fn query(&self, sql: &str) -> Result<SqlResult, LatticeError> {
         let conn = Connection::open(&self.facet_dir.join(DB_FILE), &self.config, true)?;
+        let authorizer = conn.install_sql_authorizer()?;
         let mut statement = conn.prepare_read_only(sql)?;
         let columns = statement.column_names();
         let mut rows = statement.query([])?;
@@ -578,7 +585,11 @@ impl WorkspaceStore {
             }
             out.push(values);
         }
-        Ok(SqlResult { columns, rows: out })
+        Ok(SqlResult {
+            columns,
+            rows: out,
+            redacted_columns: authorizer.columns(),
+        })
     }
 
     /// Mark-and-sweep garbage collection. Expired runs are those

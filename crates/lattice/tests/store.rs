@@ -389,6 +389,156 @@ fn sql_escape_hatch_is_read_only() {
     assert!(bad.is_query_error(), "{bad}");
 }
 
+const SQL_SENTINEL: &str = "sql-sentinel-secret-value";
+
+#[test]
+fn sql_authorizer_nulls_secret_columns_in_every_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = WorkspaceStore::open(dir.path(), config(1 << 20)).unwrap();
+    store.record_run(&run("a.yml", b"placeholder")).unwrap();
+    let conn = rusqlite::Connection::open(dir.path().join(".facet/lattice.db")).unwrap();
+    conn.execute("ALTER TABLE runs ADD COLUMN req_body BLOB", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE runs SET req_body = ?1, res_body = ?1, req_headers = ?1, res_headers = ?1",
+        [SQL_SENTINEL],
+    )
+    .unwrap();
+    conn.execute(
+        "CREATE TABLE environments (key TEXT, value TEXT, secret_ref TEXT)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO environments (key, value, secret_ref) VALUES ('token', ?1, ?1)",
+        [SQL_SENTINEL],
+    )
+    .unwrap();
+    drop(conn);
+
+    for sql in [
+        "SELECT req_headers AS h FROM runs",
+        "SELECT substr(res_body, 1, 500) FROM runs",
+        "SELECT res_body || '' FROM runs",
+        "WITH c AS (SELECT req_headers AS h FROM runs) SELECT h FROM c",
+        "SELECT h FROM (SELECT res_headers AS h FROM runs)",
+        "SELECT json_extract(json_object('v', req_headers), '$.v') FROM runs",
+        "SELECT length(res_body) FROM runs",
+        "SELECT value AS v FROM environments",
+        "SELECT substr(secret_ref, 1, 20) FROM environments",
+    ] {
+        let result = store
+            .query(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error}"));
+        assert_no_sentinel(sql, &result);
+        assert!(
+            result
+                .rows
+                .iter()
+                .all(|row| row.iter().all(|value| *value == SqlValue::Null)),
+            "{sql} did not null the secret reference: {result:?}"
+        );
+    }
+    // This SQLite's hex() turns a NULL argument into '' rather than NULL.
+    // The secret bytes are still absent.
+    let sentinel_hex: String = SQL_SENTINEL
+        .bytes()
+        .map(|byte| format!("{byte:02X}"))
+        .collect();
+    for sql in [
+        "SELECT hex(res_body) FROM runs",
+        "SELECT hex(req_body) FROM runs",
+    ] {
+        let result = store.query(sql).unwrap();
+        assert_no_sentinel(sql, &result);
+        let dumped = format!("{result:?}");
+        assert!(!dumped.contains(&sentinel_hex), "{sql}: {dumped}");
+        assert!(
+            result.rows.iter().all(|row| {
+                row.iter().all(|value| match value {
+                    SqlValue::Null => true,
+                    SqlValue::Text(text) => text.is_empty(),
+                    _ => false,
+                })
+            }),
+            "{sql}: {result:?}"
+        );
+    }
+
+    let star = store.query("SELECT * FROM runs").unwrap();
+    assert_no_sentinel("SELECT *", &star);
+    for name in ["req_body", "res_body", "req_headers", "res_headers"] {
+        let index = star
+            .columns
+            .iter()
+            .position(|column| column == name)
+            .unwrap_or_else(|| panic!("{name} missing from {:?}", star.columns));
+        assert_eq!(star.rows[0][index], SqlValue::Null, "{name}");
+    }
+    assert_eq!(
+        star.redacted_columns,
+        vec![
+            "runs.req_body".to_string(),
+            "runs.req_headers".to_string(),
+            "runs.res_body".to_string(),
+            "runs.res_headers".to_string(),
+        ]
+    );
+
+    let length = store
+        .query("SELECT length(res_body), length(req_headers) FROM runs")
+        .unwrap();
+    assert_eq!(length.rows[0][0], SqlValue::Null);
+    assert_eq!(length.rows[0][1], SqlValue::Null);
+
+    let alias = store
+        .query("SELECT req_headers AS h, request_path FROM runs")
+        .unwrap();
+    assert_eq!(alias.rows[0][0], SqlValue::Null);
+    assert_eq!(alias.rows[0][1], SqlValue::Text("a.yml".into()));
+    assert_eq!(alias.redacted_columns, vec!["runs.req_headers".to_string()]);
+    assert_no_sentinel("alias", &alias);
+
+    let env = store
+        .query("SELECT key, value, secret_ref FROM environments")
+        .unwrap();
+    assert_eq!(env.rows[0][0], SqlValue::Text("token".into()));
+    assert_eq!(env.rows[0][1], SqlValue::Null);
+    assert_eq!(env.rows[0][2], SqlValue::Null);
+    assert_eq!(
+        env.redacted_columns,
+        vec![
+            "environments.secret_ref".to_string(),
+            "environments.value".to_string()
+        ]
+    );
+
+    let view = store.query("CREATE VIEW leak AS SELECT req_headers FROM runs");
+    assert!(
+        matches!(view, Err(LatticeError::ReadOnlyQuery)),
+        "creating a view must fail on the read-only connection: {view:?}"
+    );
+    assert!(matches!(
+        store.query("PRAGMA user_version = 7"),
+        Err(LatticeError::ReadOnlyQuery)
+    ));
+    let info = store.query("PRAGMA table_info(runs)").unwrap();
+    assert_no_sentinel("table_info", &info);
+    assert!(
+        store
+            .query("SELECT load_extension('not-a-library')")
+            .is_err()
+    );
+}
+
+fn assert_no_sentinel(sql: &str, result: &lattice::SqlResult) {
+    let dumped = format!("{result:?}");
+    assert!(
+        !dumped.contains(SQL_SENTINEL),
+        "{sql} leaked the sentinel: {dumped}"
+    );
+}
+
 #[test]
 fn gc_is_mark_and_sweep_with_a_dry_run() {
     let dir = tempfile::tempdir().unwrap();

@@ -70,7 +70,7 @@ nu facet.nu doctor [path]                    # exit 1 is warnings, still a resul
 `history` always sends `--limit`. The skill default is 20. The CLI default, when `--limit` is omitted, is 50. `--status` is one HTTP status code (`200`), not a class (`2xx`). `--session current` reads `FACET_SESSION`.
 
 `history --id` returns the recorded run with body size and hash, not body text. `history --sql` is read-only: the CLI opens the workspace store on a read-only connection and rejects a statement that is not read-only (`sql_read_only`). The machine store is not attached.
-Body and header columns (`req_body`, `res_body`, `req_headers`, `res_headers`) come back as `{redacted: true, bytes: N}`; other blob values come back as a size.
+Reads of `runs.req_body`, `runs.res_body`, `runs.req_headers`, `runs.res_headers`, `environments.value`, and `environments.secret_ref` are NULL wherever the statement references them (`redactedColumns` lists each `table.column`). `length` of those columns is NULL. Other blob values come back as a size.
 
 `diff` sets `same: false` when the CLI exits 1 (the runs differ). That is a result, and the body text is not included. `doctor` sets `healthy: false` when the CLI exits 1 for warnings; the JSON document is still returned.
 

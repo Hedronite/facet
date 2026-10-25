@@ -460,114 +460,154 @@ fn wrapped_commands_omit_bodies_and_stored_values() {
     assert!(pins.get("pins").is_some());
 }
 
-/// `SELECT *` must not return the body or header text `blob` and
-/// `history --bodies` are also kept from returning.
+const SQL_SENTINEL: &str = "sql-sentinel-secret-value";
+
+/// The authorizer nulls secret columns at the source, so aliases and
+/// expressions cannot bring the text back. `length` is allowed and is NULL.
 #[test]
-fn sql_select_star_redacts_body_and_header_text() {
+fn sql_authorizer_hides_secret_text_from_the_envelope() {
     let sandbox = Sandbox::new();
-    let body = br#"{"secretBody":"sql-body-marker"}"#;
-    let (url, server) = serve_once(body.to_vec(), "application/json");
+    let (url, server) = serve_once(br#"{"ok":true}"#.to_vec(), "application/json");
     let workspace = sandbox.workspace(&url);
     let path = workspace.to_str().expect("workspace path");
     sandbox.run_json(&["request", "run", path, "items/0", "--environment", "local"]);
     server.join().expect("mock server");
 
     let db = rusqlite::Connection::open(sandbox.root().join(".facet/lattice.db")).expect("store");
-    let req_headers: String = db
-        .query_row("SELECT req_headers FROM runs", [], |row| row.get(0))
-        .expect("req_headers");
-    let res_headers: String = db
-        .query_row("SELECT res_headers FROM runs", [], |row| row.get(0))
-        .expect("res_headers");
-    let res_body: Vec<u8> = db
-        .query_row("SELECT res_body FROM runs", [], |row| row.get(0))
-        .expect("res_body");
-    assert!(
-        req_headers.contains("phase-five") && req_headers.contains("X-Probe"),
-        "fixture header was not stored: {req_headers}"
-    );
-    assert!(
-        res_headers.contains("content-type"),
-        "response headers were not stored: {res_headers}"
-    );
-    assert!(
-        res_body
-            .windows(b"sql-body-marker".len())
-            .any(|window| window == b"sql-body-marker"),
-        "inline response body was not stored"
-    );
+    db.execute("ALTER TABLE runs ADD COLUMN req_body BLOB", [])
+        .expect("restore req_body");
+    db.execute(
+        "UPDATE runs SET req_body = ?1, res_body = ?1, req_headers = ?1, res_headers = ?1",
+        [SQL_SENTINEL],
+    )
+    .expect("seed runs");
+    db.execute(
+        "CREATE TABLE environments (key TEXT, value TEXT, secret_ref TEXT)",
+        [],
+    )
+    .expect("environments");
+    db.execute(
+        "INSERT INTO environments (key, value, secret_ref) VALUES ('token', ?1, ?1)",
+        [SQL_SENTINEL],
+    )
+    .expect("seed environments");
+    drop(db);
 
-    let dump = sandbox.run_json(&["history", path, "--sql", "SELECT * FROM runs"]);
-    let text = dump.to_string();
-    for marker in [
-        "sql-body-marker",
-        "phase-five",
-        "X-Probe",
-        "content-type",
-        "{\"source\":\"cli\"}",
+    for sql in [
+        "SELECT req_headers AS h FROM runs",
+        "SELECT substr(res_body, 1, 500) FROM runs",
+        "SELECT res_body || '' FROM runs",
+        "WITH c AS (SELECT req_headers AS h FROM runs) SELECT h FROM c",
+        "SELECT h FROM (SELECT res_headers AS h FROM runs)",
+        "SELECT json_extract(json_object('v', req_headers), '$.v') FROM runs",
+        "SELECT length(res_body) FROM runs",
+        "SELECT value AS v FROM environments",
+        "SELECT substr(secret_ref, 1, 40) FROM environments",
     ] {
-        assert!(!text.contains(marker), "{marker} leaked: {text}");
-    }
-
-    let columns = dump["columns"].as_array().expect("columns");
-    let row = dump["rows"][0].as_array().expect("row");
-    let cell = |name: &str| {
-        let index = columns
-            .iter()
-            .position(|column| column.as_str() == Some(name))
-            .unwrap_or_else(|| panic!("{name} missing from {columns:?}"));
-        &row[index]
-    };
-    assert_eq!(
-        cell("req_headers"),
-        &json!({ "redacted": true, "bytes": req_headers.len() })
-    );
-    assert_eq!(
-        cell("res_headers"),
-        &json!({ "redacted": true, "bytes": res_headers.len() })
-    );
-    assert_eq!(
-        cell("res_body"),
-        &json!({ "redacted": true, "bytes": res_body.len() })
-    );
-    assert!(
-        columns
-            .iter()
-            .all(|column| column.as_str() != Some("req_body")),
-        "v2 stores request bodies as blob files, not an inline req_body column"
-    );
-    let method = columns
-        .iter()
-        .position(|column| column.as_str() == Some("method"))
-        .expect("method");
-    assert_eq!(row[method], "POST");
-
-    // v2 dropped the inline req_body column. The same redaction applies when a
-    // result column has that name.
-    let as_req_body = sandbox.run_json(&[
-        "history",
-        path,
-        "--sql",
-        "SELECT res_body AS req_body FROM runs",
-    ]);
-    assert_eq!(
-        as_req_body["rows"][0][0],
-        json!({ "redacted": true, "bytes": res_body.len() })
-    );
-    assert!(!as_req_body.to_string().contains("sql-body-marker"));
-
-    let human = sandbox
-        .facet()
-        .args(["history", path, "--sql", "SELECT * FROM runs"])
-        .output()
-        .expect("human sql");
-    assert!(human.status.success());
-    let stdout = String::from_utf8(human.stdout).expect("human utf-8");
-    for marker in ["sql-body-marker", "phase-five", "X-Probe", "content-type"] {
+        let (code, envelope) = sql_envelope(&sandbox, path, sql);
+        assert_eq!(code, 0, "{sql}\n{envelope}");
         assert!(
-            !stdout.contains(marker),
-            "{marker} leaked on stdout: {stdout}"
+            !envelope.contains(SQL_SENTINEL),
+            "{sql} leaked the sentinel:\n{envelope}"
+        );
+        let document: Value = serde_json::from_str(&envelope).expect("json envelope");
+        let rows = document["rows"].as_array().expect("rows");
+        assert!(
+            rows.iter().all(|row| {
+                row.as_array()
+                    .expect("row")
+                    .iter()
+                    .all(|cell| cell.is_null())
+            }),
+            "{sql} did not null the secret reference:\n{envelope}"
         );
     }
-    assert!(stdout.contains("<redacted "), "{stdout}");
+
+    let sentinel_hex: String = SQL_SENTINEL
+        .bytes()
+        .map(|byte| format!("{byte:02X}"))
+        .collect();
+    for sql in [
+        "SELECT hex(res_body) FROM runs",
+        "SELECT hex(req_body) FROM runs",
+    ] {
+        let (code, envelope) = sql_envelope(&sandbox, path, sql);
+        assert_eq!(code, 0, "{sql}\n{envelope}");
+        assert!(!envelope.contains(SQL_SENTINEL), "{envelope}");
+        assert!(
+            !envelope.contains(&sentinel_hex),
+            "{sql} leaked hex(secret):\n{envelope}"
+        );
+        let document: Value = serde_json::from_str(&envelope).expect("json envelope");
+        let cell = &document["rows"][0][0];
+        assert!(
+            cell.is_null() || cell.as_str() == Some(""),
+            "{sql}: {envelope}"
+        );
+    }
+
+    let (code, envelope) = sql_envelope(
+        &sandbox,
+        path,
+        "SELECT length(res_body), length(req_headers) FROM runs",
+    );
+    assert_eq!(code, 0, "{envelope}");
+    let document: Value = serde_json::from_str(&envelope).unwrap();
+    assert_eq!(document["rows"][0], json!([null, null]));
+    assert!(!envelope.contains(SQL_SENTINEL));
+
+    let (code, envelope) = sql_envelope(
+        &sandbox,
+        path,
+        "SELECT req_headers AS h, request_path FROM runs",
+    );
+    assert_eq!(code, 0, "{envelope}");
+    let document: Value = serde_json::from_str(&envelope).unwrap();
+    assert_eq!(document["rows"][0][0], Value::Null);
+    assert_eq!(document["rows"][0][1], "items/0");
+    assert_eq!(document["redactedColumns"], json!(["runs.req_headers"]));
+    assert!(!envelope.contains(SQL_SENTINEL));
+
+    let (code, envelope) = sql_envelope(&sandbox, path, "SELECT * FROM runs");
+    assert_eq!(code, 0, "{envelope}");
+    let document: Value = serde_json::from_str(&envelope).unwrap();
+    for column in ["req_body", "res_body", "req_headers", "res_headers"] {
+        let index = document["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|name| name == column)
+            .unwrap_or_else(|| panic!("{column} missing"));
+        assert!(document["rows"][0][index].is_null(), "{column}");
+    }
+    assert_eq!(
+        document["redactedColumns"],
+        json!([
+            "runs.req_body",
+            "runs.req_headers",
+            "runs.res_body",
+            "runs.res_headers"
+        ])
+    );
+    assert!(!envelope.contains(SQL_SENTINEL));
+
+    let (code, envelope) = sql_envelope(
+        &sandbox,
+        path,
+        "CREATE VIEW leak AS SELECT req_headers FROM runs",
+    );
+    assert_ne!(code, 0, "a read-only connection must not create a view");
+    assert!(!envelope.contains(SQL_SENTINEL), "{envelope}");
+}
+
+fn sql_envelope(sandbox: &Sandbox, path: &str, sql: &str) -> (u8, String) {
+    let output = sandbox
+        .facet()
+        .args(["history", path, "--sql", sql, "--json"])
+        .output()
+        .expect("facet sql");
+    let code = output.status.code().unwrap_or(255) as u8;
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf-8");
+    (code, format!("{stdout}{stderr}"))
 }
