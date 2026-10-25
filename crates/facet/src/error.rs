@@ -215,6 +215,12 @@ impl FacetError {
             )
             .with_details(json!({ "variable": name })),
             HydrateError::Lattice(error) => Self::lattice(error),
+            HydrateError::HostOverride { name } => Self::new(
+                "host_override_refused",
+                format!("host override refused for {name}"),
+                CONFIGURATION_EXIT_CODE,
+            )
+            .with_details(json!({ "variable": name })),
         }
     }
 
