@@ -59,7 +59,7 @@ fn intent_projection_is_docs_eod_desired_state() {
     assert!(row["spec"]["required_briefs"]
         .as_array()
         .unwrap()
-        .contains(&serde_json::json!("foundry/hedronetes/CHECKLIST-nickel")));
+        .contains(&serde_json::json!("docs/CHECKLIST-nickel")));
 }
 
 #[test]

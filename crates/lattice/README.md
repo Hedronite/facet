@@ -1,6 +1,6 @@
 # facet-lattice
 
-**facet-lattice** is the run-history library for [Facet](https://github.com/VirtualMachinist/facet): bundled SQLite beside OpenCollection YAML, with an optional DuckDB analytics feature. Facet (the CLI/TUI product) depends on this crate; strangers add it directly from crates.io.
+**facet-lattice** is the run-history library for [Facet](https://github.com/Hedronite/facet): bundled SQLite beside OpenCollection YAML, with an optional DuckDB analytics feature. Facet (the CLI/TUI product) depends on this crate; strangers add it directly from crates.io.
 
 The Rust library import is `lattice` (`use lattice::…`). The Cargo package name is **`facet-lattice`** — not `lattice` (that crates.io name is unrelated).
 
@@ -34,9 +34,9 @@ facet-lattice = { version = "0.5.9", features = ["lattice-duckdb"] }
 
 ## Docs
 
-- [Install guide](https://github.com/VirtualMachinist/facet/blob/main/docs/install.md)
-- [Facet guide](https://github.com/VirtualMachinist/facet/blob/main/docs/FACET.md)
-- [facet-lattice engines](https://github.com/VirtualMachinist/facet/blob/main/docs/LATTICE-ENGINES.md)
+- [Install guide](https://github.com/Hedronite/facet/blob/main/docs/install.md)
+- [Facet guide](https://github.com/Hedronite/facet/blob/main/docs/FACET.md)
+- [facet-lattice engines](https://github.com/Hedronite/facet/blob/main/docs/LATTICE-ENGINES.md)
 
 ## License
 

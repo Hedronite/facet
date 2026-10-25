@@ -68,17 +68,17 @@ The Cargo package is **`facet-lattice`** (not `lattice` — that name on crates.
 
 ### CLI — the `facet` binary
 
-The CLI is **not** `cargo install facet`. Pick one:
+The CLI is **not** `cargo install facet`. The Cargo package is `facet-cli`; the binary is `facet`.
 
-**Release archive** (fastest): download from [GitHub Releases](https://github.com/Hedronite/facet/releases), extract `facet`, add to `PATH`.
-
-**From git** (Rust required):
+**v0.7.0 tag** (primary, Rust required):
 
 ```bash
-cargo install --git https://github.com/Hedronite/facet --package facet-cli --bin facet
+cargo install --git https://github.com/Hedronite/facet --tag v0.7.0 --locked --bin facet facet-cli
 ```
 
-**From a clone** (contributors): `cargo build --release -p probe-cli -p facet-cli` — see [docs/install.md](docs/install.md).
+**From main** (secondary): `cargo install --git https://github.com/Hedronite/facet --locked --bin facet facet-cli`, or clone and `cargo build --release -p probe-cli -p facet-cli`. See [docs/install.md](docs/install.md).
+
+**Release archive:** download from [GitHub Releases](https://github.com/Hedronite/facet/releases), extract `facet`, add to `PATH`.
 
 Verify: `facet --version` and `facet doctor --json`.
 
