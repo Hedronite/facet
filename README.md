@@ -114,9 +114,10 @@ Example collection for calling the TypeSafe API from `facet` (judge-style reques
 ## Agent use: skills + CLI first, MCP still shipped
 
 The default way for an agent to use this tool is the bundled skill in
-`skills/facet/`: a short `SKILL.md` the harness reads to decide when to use
-it, plus a Nushell body that calls the CLI with JSON output. The MCP server
-(`facet mcp`) is still built and shipped, and works the same as before.
+[`.agents/skills/facet/`](.agents/skills/facet/SKILL.md): a short `SKILL.md`
+the harness reads to decide when to use it, plus a Nushell body that calls
+the CLI with JSON output. The MCP server (`facet mcp`) is still built and
+shipped, and works the same as before.
 
 Why the skill is the default:
 
@@ -133,8 +134,10 @@ Use the MCP server when your harness defers or filters MCP tool schemas
 (loading them only on demand, or letting you enable single tools), or when
 the client has no shell.
 
-Install the skill by copying or linking `skills/facet/` into your harness's
-skills directory (for example `~/.agents/skills/` or `~/.claude/skills/`).
+The same files are checked in as ordinary files (not symlinks) at
+`.claude/skills/facet/`, `.grok/skills/facet/`, and `.cursor/skills/facet/`.
+[`scripts/sync-skills`](scripts/sync-skills) rewrites those copies from
+`.agents/skills/`. There is no `.omp/skills/` or `.codex/skills/` tree.
 
 ### TUI quick reference
 
@@ -169,7 +172,7 @@ Facet rebuilds the terminal and history layers; Probe owns the core domain and H
 <summary><strong>Repository map</strong></summary>
 
 ```
-skills/facet/             # agent skill (SKILL.md + Nushell CLI wrapper)
+.agents/skills/facet/     # canonical agent skill (SKILL.md + Nushell CLI wrapper)
 crates/facet/             # facet CLI binary (facet-cli)
 crates/lattice/           # facet-lattice library (crates.io)
 crates/facet-tui/         # Ratatui interface

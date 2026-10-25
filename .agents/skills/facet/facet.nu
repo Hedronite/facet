@@ -27,8 +27,52 @@ def parsed [stdout: string] {
   try { $stdout | from json } catch { null }
 }
 
-def run-facet [args: list<string>] {
-  let blocked = (guard $args)
+# Empty or unset FACET_ACTOR uses the CLI default, human (actor_from_env).
+# The skill does not invent an actor name.
+def facet-actor [] {
+  let set = (try { $env.FACET_ACTOR } catch { "" })
+  if ($set | is-empty) { "human" } else { $set }
+}
+
+def has-collection [dir: string] {
+  let yml = (
+    ["opencollection.yml" "opencollection.yaml"]
+    | any {|name| ($dir | path join $name) | path exists }
+  )
+  let db = (($dir | path join ".facet" "lattice.db") | path exists)
+  $yml or $db
+}
+
+def walk-up [dir: string, start: string] {
+  if (has-collection $dir) {
+    { ok: true, dir: $dir, error: "" }
+  } else {
+    let parent = ($dir | path dirname)
+    if $parent == $dir {
+      { ok: false, dir: "", error: $"no collection at ($start)" }
+    } else {
+      walk-up $parent $start
+    }
+  }
+}
+
+# A path may be the collection directory, its OpenCollection file, or anything
+# inside it. With no path, walk up from the working directory. Failure does
+# not call facet.
+def resolve-collection [path: string] {
+  let given = ($path | str trim)
+  let start = if ($given | is-empty) { $env.PWD } else { $given }
+  if not ($start | path exists) {
+    { ok: false, dir: "", error: $"collection not found: ($start)" }
+  } else {
+    let kind = ($start | path type)
+    let anchor = if $kind == "file" { $start | path dirname } else { $start }
+    walk-up ($anchor | path expand) $start
+  }
+}
+
+def run-facet [args: list<string>, collection: string = ""] {
+  let blocked = (guard ($args | append $collection))
   if not ($blocked | is-empty) {
     {
       stdout: ""
@@ -37,8 +81,22 @@ def run-facet [args: list<string>] {
       refused: true
     }
   } else {
-    let done = (^facet ...$args --json | complete)
-    $done | insert refused false
+    let found = (resolve-collection $collection)
+    if not $found.ok {
+      {
+        stdout: ""
+        stderr: $found.error
+        exit_code: 2
+        refused: true
+      }
+    } else {
+      let actor = (facet-actor)
+      let done = (with-env { FACET_ACTOR: $actor } {
+        cd $found.dir
+        ^facet ...$args --json | complete
+      })
+      $done | insert refused false
+    }
   }
 }
 
@@ -53,8 +111,8 @@ def fail [command: string, r: record] {
   if $data == null { $base } else { $base | insert data $data }
 }
 
-def envelope [command: string, args: list<string>] {
-  let r = (run-facet $args)
+def envelope [command: string, args: list<string>, collection: string = ""] {
+  let r = (run-facet $args $collection)
   let data = (parsed $r.stdout)
   if $r.refused or $r.exit_code != 0 or $data == null {
     fail $command $r
@@ -74,7 +132,6 @@ def emit []: record -> any {
 }
 
 def opt [flag: string, v: string] { if ($v | is-empty) { [] } else { [$flag $v] } }
-def pos [v: string] { if ($v | is-empty) { [] } else { [$v] } }
 
 # `{environment, name}` only. Drops every other entry field.
 def project-names [data: record] {
@@ -101,37 +158,36 @@ def "main history" [
 ] {
   envelope "history" (
     ["history"]
-    ++ (pos $path)
     ++ ["--limit" ($limit | into string)]
     ++ (opt "--request" $request)
     ++ (opt "--status" $status)
     ++ (opt "--session" $session)
-  ) | emit
+  ) $path | emit
 }
 
 def "main last" [path: string = "", --request: string = ""] {
-  envelope "last" (["last"] ++ (pos $path) ++ (opt "--request" $request)) | emit
+  envelope "last" (["last"] ++ (opt "--request" $request)) $path | emit
 }
 
-def "main sessions" [--open] {
+def "main sessions" [path: string = "", --open] {
   let args = if $open { ["session" "list" "--open"] } else { ["session" "list"] }
-  envelope "sessions" $args | emit
+  envelope "sessions" $args $path | emit
 }
 
-def "main session" [id: string] {
+def "main session" [id: string, path: string = ""] {
   if ($id | is-empty) {
     fail "session" { stdout: "", stderr: "session requires <id> or current", exit_code: 2, refused: true }
   } else {
-    envelope "session" ["session" "show" $id]
+    envelope "session" ["session" "show" $id] $path
   } | emit
 }
 
 def "main pins" [path: string = ""] {
-  envelope "pins" (["pin" "list"] ++ (pos $path)) | emit
+  envelope "pins" ["pin" "list"] $path | emit
 }
 
 def "main env" [path: string = "", --environment: string = ""] {
-  let result = (envelope "env" (["env" "list"] ++ (pos $path) ++ (opt "--environment" $environment)))
+  let result = (envelope "env" (["env" "list"] ++ (opt "--environment" $environment)) $path)
   if $result.ok {
     $result | upsert data (project-names $result.data)
   } else {
@@ -140,7 +196,7 @@ def "main env" [path: string = "", --environment: string = ""] {
 }
 
 def "main diff" [a: string, b: string, path: string = ""] {
-  let r = (run-facet (["diff" $a $b] ++ (pos $path)))
+  let r = (run-facet ["diff" $a $b] $path)
   let data = (parsed $r.stdout)
   if $r.refused or $data == null or not ($r.exit_code in [0 1]) {
     fail "diff" $r
@@ -149,8 +205,8 @@ def "main diff" [a: string, b: string, path: string = ""] {
   } | emit
 }
 
-def "main doctor" [] {
-  let r = (run-facet ["doctor"])
+def "main doctor" [path: string = ""] {
+  let r = (run-facet ["doctor"] $path)
   let data = (parsed $r.stdout)
   let warnings = (
     $r.stderr

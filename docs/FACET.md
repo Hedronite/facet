@@ -737,12 +737,19 @@ The `[colors]` tokens, grouped as in `Palette`:
 ### Agent skill
 
 The recommended way for a coding agent to use Facet is
-[`skills/facet`](../skills/facet/SKILL.md): `SKILL.md` plus `facet.nu`, which
-calls this CLI with `--json` after the subcommand. The wrapper is read-only.
-It covers `history` (no `--bodies`, `--id`, or `--sql`), `last`, `session list`,
-`session show`, `pin list`, `env list` (names only), `diff` (no `--bodies`),
-and `doctor`. It does not wrap `request run` (including `--dry-run`), `replay`,
-`blob`, or commands that write. `facet mcp` is unchanged; see below.
+[`.agents/skills/facet`](../.agents/skills/facet/SKILL.md): `SKILL.md` plus
+`facet.nu`, which calls this CLI with `--json` after the subcommand. The
+same bytes are copied to `.claude/skills/facet/`, `.grok/skills/facet/`, and
+`.cursor/skills/facet/` by `scripts/sync-skills`. The wrapper is read-only.
+It resolves a collection (directory, `opencollection.yml` / `opencollection.yaml`,
+or a path inside it; otherwise it walks up for those files or `.facet/lattice.db`),
+`cd`s there, and returns `ok: false` without calling `facet` when that fails.
+It exports `FACET_ACTOR`, using the CLI default `human` when the variable is
+unset or empty. It covers `history` (no `--bodies`, `--id`, or `--sql`), `last`,
+`session list`, `session show`, `pin list`, `env list` (names only), `diff`
+(no `--bodies`), and `doctor`. It does not wrap `request run` (including
+`--dry-run`), `replay`, `blob`, or commands that write. `facet mcp` is unchanged;
+see below.
 
 ### `mcp`
 
@@ -786,7 +793,7 @@ Claude Code (`.mcp.json`):
 ```
 
 The CLI remains the contract. Prefer the skill in
-[`skills/facet`](../skills/facet/SKILL.md); it does not add tool schemas to
+[`.agents/skills/facet`](../.agents/skills/facet/SKILL.md); it does not add tool schemas to
 context. Use `mcp` when a harness defers or filters tool schemas, or when the
 client has no shell. MCP still returns `structuredContent` identical to
 `facet <command> --json`.

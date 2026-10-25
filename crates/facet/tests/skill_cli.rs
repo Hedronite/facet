@@ -1,4 +1,4 @@
-//! The agent skill in `skills/facet/` is a thin wrapper over Facet CLI reads.
+//! The agent skill in `.agents/skills/facet/` is a thin wrapper over Facet CLI reads.
 //! These tests lock the argv it is allowed to build and the CLI facts that
 //! wrapper depends on: `--json` after the subcommand, metadata history, env
 //! list without values, and hash-first diff.
@@ -6,7 +6,11 @@
 #[allow(dead_code, unused_imports)]
 mod common;
 
-use std::{fs, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::{Path, PathBuf},
+};
 
 use common::{Sandbox, serve_once};
 use serde_json::Value;
@@ -16,7 +20,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn skill_nu() -> String {
-    fs::read_to_string(repo_root().join("skills/facet/facet.nu")).expect("skill body")
+    fs::read_to_string(repo_root().join(".agents/skills/facet/facet.nu")).expect("skill body")
 }
 
 fn flag_tokens(source: &str) -> Vec<String> {
@@ -89,6 +93,12 @@ fn skill_source_stays_on_the_safe_command_set() {
 
     assert!(source.contains("^facet ...$args --json"));
     assert!(!source.contains("^facet --json"));
+    assert!(source.contains("FACET_ACTOR"));
+    assert!(source.contains("\"human\""));
+    assert!(source.contains("opencollection.yml"));
+    assert!(source.contains("lattice.db"));
+    assert!(source.contains("cd $found.dir"));
+    assert!(!source.contains("facet-skill"));
     for command in [
         "\"history\"",
         "\"last\"",
@@ -104,7 +114,8 @@ fn skill_source_stays_on_the_safe_command_set() {
         assert!(source.contains(command), "missing {command}");
     }
 
-    let skill = fs::read_to_string(repo_root().join("skills/facet/SKILL.md")).expect("SKILL.md");
+    let skill =
+        fs::read_to_string(repo_root().join(".agents/skills/facet/SKILL.md")).expect("SKILL.md");
     for phrase in [
         "history --bodies",
         "history --id",
@@ -115,14 +126,113 @@ fn skill_source_stays_on_the_safe_command_set() {
         "blob",
         "names only",
         "facet history --json",
+        "FACET_ACTOR",
+        "human",
+        "ok: false",
+        "opencollection.yml",
+        ".facet/lattice.db",
     ] {
         assert!(skill.contains(phrase), "SKILL.md missing {phrase}");
     }
 
     let readme = fs::read_to_string(repo_root().join("README.md")).expect("README");
     assert!(readme.contains("## Agent use: skills + CLI first, MCP still shipped"));
-    assert!(readme.contains("skills/facet/"));
+    assert!(readme.contains(".agents/skills/facet/"));
+    assert!(readme.contains("scripts/sync-skills"));
     assert!(readme.contains("`facet mcp`"));
+
+    let keys = frontmatter_keys(&skill);
+    assert_eq!(keys, BTreeSet::from(["description", "name"]));
+}
+
+/// Harness copies are ordinary files with the same bytes as `.agents/skills/`.
+#[test]
+fn skill_copies_match_canonical_bytes() {
+    let root = repo_root();
+    let canonical = root.join(".agents/skills");
+    let source = skill_tree(&canonical);
+    assert!(
+        source.files.contains_key(Path::new("facet/SKILL.md")),
+        "canonical skill is missing"
+    );
+    assert!(source.files.contains_key(Path::new("facet/facet.nu")));
+
+    for copy in [".claude/skills", ".grok/skills", ".cursor/skills"] {
+        let tree = skill_tree(&root.join(copy));
+        assert_eq!(tree.dirs, source.dirs, "{copy} directories differ");
+        assert_eq!(
+            tree.files.keys().collect::<Vec<_>>(),
+            source.files.keys().collect::<Vec<_>>(),
+            "{copy} file paths differ"
+        );
+        for (path, bytes) in &source.files {
+            assert_eq!(
+                tree.files.get(path).map(Vec::as_slice),
+                Some(bytes.as_slice()),
+                "{copy} {path:?} bytes differ"
+            );
+        }
+    }
+
+    for absent in [".omp/skills", ".codex/skills", "skills"] {
+        assert!(!root.join(absent).exists(), "{absent} should not exist");
+    }
+
+    let claude = fs::read_to_string(root.join("CLAUDE.md")).expect("CLAUDE.md");
+    assert_eq!(claude, "@AGENTS.md\n");
+}
+
+fn frontmatter_keys(skill: &str) -> BTreeSet<&str> {
+    let body = skill
+        .strip_prefix("---\n")
+        .expect("SKILL.md frontmatter start");
+    let end = body.find("\n---\n").expect("SKILL.md frontmatter end");
+    body[..end]
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with(' ') && !line.starts_with('\t'))
+        .map(|line| line.split_once(':').expect("frontmatter key").0)
+        .collect()
+}
+
+struct SkillTree {
+    dirs: BTreeSet<PathBuf>,
+    files: BTreeMap<PathBuf, Vec<u8>>,
+}
+
+fn skill_tree(root: &Path) -> SkillTree {
+    let mut tree = SkillTree {
+        dirs: BTreeSet::new(),
+        files: BTreeMap::new(),
+    };
+    walk_skill_tree(root, root, &mut tree);
+    tree
+}
+
+fn walk_skill_tree(root: &Path, path: &Path, tree: &mut SkillTree) {
+    let meta = fs::symlink_metadata(path).unwrap_or_else(|error| {
+        panic!("stat {}: {error}", path.display());
+    });
+    assert!(
+        !meta.file_type().is_symlink(),
+        "{} is a symlink",
+        path.display()
+    );
+    if meta.is_dir() {
+        if path != root {
+            tree.dirs
+                .insert(path.strip_prefix(root).expect("prefix").to_path_buf());
+        }
+        for entry in fs::read_dir(path).unwrap_or_else(|error| {
+            panic!("read {}: {error}", path.display());
+        }) {
+            let entry = entry.expect("dir entry");
+            walk_skill_tree(root, &entry.path(), tree);
+        }
+    } else {
+        let rel = path.strip_prefix(root).expect("prefix").to_path_buf();
+        tree.files
+            .insert(rel, fs::read(path).expect("read skill file"));
+    }
 }
 
 #[test]

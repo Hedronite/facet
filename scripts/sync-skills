@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Rewrite harness skill copies from the canonical tree.
+#
+# Canonical: .agents/skills/<name>/
+# Copies:    .claude/skills/<name>/  .grok/skills/<name>/  .cursor/skills/<name>/
+#
+# Copies are ordinary files. A symlink is refused: Windows and some packaging
+# drop it, and the cargo test compares bytes. There is no .omp/skills/ copy
+# (a native omp skill would shadow the others) and no .codex/skills/ copy
+# (Codex reads .agents/skills/).
+
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+canonical="$root/.agents/skills"
+dest_roots=("$root/.claude/skills" "$root/.grok/skills" "$root/.cursor/skills")
+
+if [[ ! -d "$canonical" ]]; then
+  echo "sync-skills: missing $canonical" >&2
+  exit 1
+fi
+
+if find "$canonical" -type l -print -quit | grep -q .; then
+  echo "sync-skills: $canonical contains a symlink" >&2
+  find "$canonical" -type l -print >&2
+  exit 1
+fi
+
+copy_tree() {
+  local src="$1"
+  local dest="$2"
+  local path rel target
+  mkdir -p "$dest"
+  while IFS= read -r -d '' path; do
+    rel="${path#"$src"/}"
+    target="$dest/$rel"
+    mkdir -p "$(dirname "$target")"
+    rm -f "$target"
+    cp -- "$path" "$target"
+  done < <(find "$src" -type f -print0)
+}
+
+for dest_root in "${dest_roots[@]}"; do
+  mkdir -p "$dest_root"
+  for existing in "$dest_root"/*; do
+    [[ -e "$existing" ]] || continue
+    name="$(basename "$existing")"
+    if [[ ! -d "$canonical/$name" ]]; then
+      rm -rf "$existing"
+    fi
+  done
+  for skill in "$canonical"/*; do
+    [[ -d "$skill" ]] || continue
+    name="$(basename "$skill")"
+    rm -rf "${dest_root:?}/$name"
+    copy_tree "$skill" "$dest_root/$name"
+  done
+done
