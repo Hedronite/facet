@@ -13,7 +13,7 @@ use std::{
 };
 
 use common::{Sandbox, serve_once};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -138,6 +138,7 @@ fn skill_source_stays_on_the_safe_command_set() {
         "env set",
         "env delete",
         "sql_read_only",
+        "redacted",
         "--dry-run",
         "blob",
         "names only",
@@ -457,4 +458,116 @@ fn wrapped_commands_omit_bodies_and_stored_values() {
 
     let pins = sandbox.run_json(&["pin", "list", &path]);
     assert!(pins.get("pins").is_some());
+}
+
+/// `SELECT *` must not return the body or header text `blob` and
+/// `history --bodies` are also kept from returning.
+#[test]
+fn sql_select_star_redacts_body_and_header_text() {
+    let sandbox = Sandbox::new();
+    let body = br#"{"secretBody":"sql-body-marker"}"#;
+    let (url, server) = serve_once(body.to_vec(), "application/json");
+    let workspace = sandbox.workspace(&url);
+    let path = workspace.to_str().expect("workspace path");
+    sandbox.run_json(&["request", "run", path, "items/0", "--environment", "local"]);
+    server.join().expect("mock server");
+
+    let db = rusqlite::Connection::open(sandbox.root().join(".facet/lattice.db")).expect("store");
+    let req_headers: String = db
+        .query_row("SELECT req_headers FROM runs", [], |row| row.get(0))
+        .expect("req_headers");
+    let res_headers: String = db
+        .query_row("SELECT res_headers FROM runs", [], |row| row.get(0))
+        .expect("res_headers");
+    let res_body: Vec<u8> = db
+        .query_row("SELECT res_body FROM runs", [], |row| row.get(0))
+        .expect("res_body");
+    assert!(
+        req_headers.contains("phase-five") && req_headers.contains("X-Probe"),
+        "fixture header was not stored: {req_headers}"
+    );
+    assert!(
+        res_headers.contains("content-type"),
+        "response headers were not stored: {res_headers}"
+    );
+    assert!(
+        res_body
+            .windows(b"sql-body-marker".len())
+            .any(|window| window == b"sql-body-marker"),
+        "inline response body was not stored"
+    );
+
+    let dump = sandbox.run_json(&["history", path, "--sql", "SELECT * FROM runs"]);
+    let text = dump.to_string();
+    for marker in [
+        "sql-body-marker",
+        "phase-five",
+        "X-Probe",
+        "content-type",
+        "{\"source\":\"cli\"}",
+    ] {
+        assert!(!text.contains(marker), "{marker} leaked: {text}");
+    }
+
+    let columns = dump["columns"].as_array().expect("columns");
+    let row = dump["rows"][0].as_array().expect("row");
+    let cell = |name: &str| {
+        let index = columns
+            .iter()
+            .position(|column| column.as_str() == Some(name))
+            .unwrap_or_else(|| panic!("{name} missing from {columns:?}"));
+        &row[index]
+    };
+    assert_eq!(
+        cell("req_headers"),
+        &json!({ "redacted": true, "bytes": req_headers.len() })
+    );
+    assert_eq!(
+        cell("res_headers"),
+        &json!({ "redacted": true, "bytes": res_headers.len() })
+    );
+    assert_eq!(
+        cell("res_body"),
+        &json!({ "redacted": true, "bytes": res_body.len() })
+    );
+    assert!(
+        columns
+            .iter()
+            .all(|column| column.as_str() != Some("req_body")),
+        "v2 stores request bodies as blob files, not an inline req_body column"
+    );
+    let method = columns
+        .iter()
+        .position(|column| column.as_str() == Some("method"))
+        .expect("method");
+    assert_eq!(row[method], "POST");
+
+    // v2 dropped the inline req_body column. The same redaction applies when a
+    // result column has that name.
+    let as_req_body = sandbox.run_json(&[
+        "history",
+        path,
+        "--sql",
+        "SELECT res_body AS req_body FROM runs",
+    ]);
+    assert_eq!(
+        as_req_body["rows"][0][0],
+        json!({ "redacted": true, "bytes": res_body.len() })
+    );
+    assert!(!as_req_body.to_string().contains("sql-body-marker"));
+
+    let human = sandbox
+        .facet()
+        .args(["history", path, "--sql", "SELECT * FROM runs"])
+        .output()
+        .expect("human sql");
+    assert!(human.status.success());
+    let stdout = String::from_utf8(human.stdout).expect("human utf-8");
+    for marker in ["sql-body-marker", "phase-five", "X-Probe", "content-type"] {
+        assert!(
+            !stdout.contains(marker),
+            "{marker} leaked on stdout: {stdout}"
+        );
+    }
+    assert!(stdout.contains("<redacted "), "{stdout}");
 }
