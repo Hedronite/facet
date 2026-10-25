@@ -91,6 +91,12 @@ pub enum HydrateError {
     },
     /// The machine store failed while a declared secret was referenced.
     Lattice(LatticeError),
+    /// A machine-store `baseUrl` or `serverUrl` on a request that references
+    /// a declared secret. The store value is not read and not applied.
+    HostOverride {
+        /// Variable name (`baseUrl` or `serverUrl`). Never a value.
+        name: String,
+    },
 }
 
 impl std::fmt::Display for HydrateError {
@@ -102,6 +108,7 @@ impl std::fmt::Display for HydrateError {
                  set {SECRET_KEY_ENV} or make the OS keyring available"
             ),
             Self::Lattice(error) => write!(f, "{error}"),
+            Self::HostOverride { name } => write!(f, "host override refused for {name}"),
         }
     }
 }
@@ -126,6 +133,9 @@ pub fn overlay_secrets(
     else {
         return Ok(Hydration::default());
     };
+    // Includes secrets satisfied by `--var`. Those still make this a
+    // secret-referencing request, so a store host must not apply.
+    let any_secret = referenced.iter().any(|info| info.secret);
     // A user `--var` for a declared secret is still a secret: remember its
     // value for redaction even though Lattice is not consulted for it.
     let mut redact: Vec<String> = referenced
@@ -212,6 +222,9 @@ pub fn overlay_secrets(
         else {
             continue;
         };
+        if any_secret && matches!(row.key.as_str(), "baseUrl" | "serverUrl") {
+            return Err(HydrateError::HostOverride { name: info.name });
+        }
         let config = if row.secret {
             match &secret_config {
                 Ok(config) => config,
