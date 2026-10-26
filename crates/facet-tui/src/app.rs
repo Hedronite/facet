@@ -3023,10 +3023,10 @@ impl App {
         build_update(&self.method, &self.editor).apply(&mut prepared);
         if let Some(index) = self.active_environment {
             let Some(entry) = self.environments.get(index) else {
-                return Ok((prepared, Vec::new(), false));
+                return Ok((prepared, Vec::new(), true));
             };
             let Some(loaded) = self.loaded.as_ref() else {
-                return Ok((prepared, Vec::new(), false));
+                return Ok((prepared, Vec::new(), true));
             };
             // Secret hydration (Goal 5): Lattice environment values overlay
             // as overrides before resolve, same path as the CLI.
@@ -3048,7 +3048,7 @@ impl App {
             prepared = resolve_request(&prepared, &resolved).map_err(|error| error.to_string())?;
             return Ok((prepared, hydration.redact, hydration.references_secret));
         }
-        Ok((prepared, Vec::new(), false))
+        Ok((prepared, Vec::new(), true))
     }
 
     async fn run_selected(&mut self) -> Result<(), TuiError> {

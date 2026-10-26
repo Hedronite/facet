@@ -8,12 +8,16 @@
 //! error mapping are exercised together, each run with its own private
 //! machine store. Every value below is a canary, not a credential, and no
 //! assertion message prints one.
+//!
+//! N2: a request carrying a `--var` for a declared secret gets the locked
+//! transport (no redirects, no env proxy) even where hydration returns early:
+//! no workspace, no `--environment`, or failed environment discovery.
 
 use std::{
     io::{Read, Write},
     net::TcpListener,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::{
         OnceLock,
         mpsc::{self, Receiver},
@@ -22,6 +26,8 @@ use std::{
     time::Duration,
 };
 
+use facet_record::overlay_secrets;
+use probe_core::{Environment, EnvironmentVariable, Header, HttpRequest, SecretVariable};
 use serde_json::{Value, json};
 
 const STORE_MARK: &str = "h13-store-canary";
@@ -29,6 +35,18 @@ const TOKEN: &str = "h13-token-canary-not-a-credential";
 const SECRET_KEY: &str = "h13-master-key-canary";
 const USER_MARK: &str = "h13-user-canary";
 const PASS_MARK: &str = "h13-pass-canary";
+/// Never resolves: only a proxy can deliver a request for this host.
+const PROXY_TARGET: &str = "http://n2-proxy-target.invalid";
+const PROXY_VARS: [&str; 6] = [
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+];
+const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+      Content-Length: 2\r\nConnection: close\r\n\r\n{}";
 
 /// `facet` built from this workspace into the target dir and profile running
 /// this test. `cargo build` is a no-op when it is fresh and rebuilds when
@@ -98,6 +116,19 @@ impl Host {
     /// A host on another loopback address (`[::1]:0`): a different host by
     /// address, whatever the port.
     fn spawn_at(address: &str) -> Self {
+        Self::serve(address, OK.to_vec())
+    }
+
+    /// A host that answers every request `302` to `location`.
+    fn redirect_to(location: &str) -> Self {
+        let response = format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\n\
+             Content-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        Self::serve("127.0.0.1:0", response.into_bytes())
+    }
+
+    fn serve(address: &str, response: Vec<u8>) -> Self {
         let listener = TcpListener::bind(address).expect("loopback listener");
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (sender, requests) = mpsc::channel();
@@ -121,10 +152,7 @@ impl Host {
                 {
                     return;
                 }
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
-                      Content-Length: 2\r\nConnection: close\r\n\r\n{}",
-                );
+                let _ = stream.write_all(&response);
             }
         });
         Self { url, requests }
@@ -233,16 +261,45 @@ impl Sandbox {
             .env_remove("HERDR_WORKSPACE_ID")
             .env_remove("HERDR_TAB_ID")
             .env_remove("HERDR_PANE_ID")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
             .current_dir(root);
+        for name in PROXY_VARS {
+            command.env_remove(name);
+        }
         command
     }
 
     fn run(&self, arguments: &[&str]) -> Run {
-        let output = self
-            .facet()
-            .args(arguments)
-            .output()
-            .expect("facet should run");
+        self.run_with(arguments, None, None)
+    }
+
+    /// [`Self::run`] with every proxy variable pointed at `proxy`, and the
+    /// collection on stdin when `stdin` is given.
+    fn run_with(&self, arguments: &[&str], proxy: Option<&Host>, stdin: Option<&str>) -> Run {
+        let mut command = self.facet();
+        command.args(arguments);
+        if let Some(proxy) = proxy {
+            for name in PROXY_VARS {
+                command.env(name, &proxy.url);
+            }
+        }
+        command.stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = command.spawn().expect("facet should run");
+        if let Some(text) = stdin {
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(text.as_bytes())
+                .unwrap();
+        }
+        let output = child.wait_with_output().expect("facet should exit");
         Run {
             code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -588,4 +645,304 @@ fn hosts_and_secrets_still_resolve_without_a_store_host_row() {
             "{what}: the hydrated token is on the wire"
         );
     }
+}
+
+/// Where a `--var` secret request is missing what hydration needs.
+#[derive(Clone, Copy, Debug)]
+enum EarlyReturn {
+    /// The collection comes from stdin, so there is no workspace root.
+    NoWorkspace,
+    /// No `--environment`.
+    NoEnvironment,
+    /// Discovery cannot run: a malformed reference, or an unknown environment.
+    MalformedReference,
+    UnknownEnvironment,
+}
+
+impl EarlyReturn {
+    /// Runs the secret item (`items/0` redirect, `items/1` proxied) with the
+    /// token as `--var`, shaped for this early return.
+    fn run(self, sandbox: &Sandbox, item: usize, proxy: Option<&Host>) -> Run {
+        let var = format!("token={TOKEN}");
+        let item = match self {
+            Self::MalformedReference => format!("items/{}", item + 4),
+            _ => format!("items/{item}"),
+        };
+        let source;
+        let (workspace, stdin) = match self {
+            Self::NoWorkspace => {
+                source = std::fs::read_to_string(&sandbox.workspace).unwrap();
+                ("-", Some(source.as_str()))
+            }
+            _ => (sandbox.ws(), None),
+        };
+        let mut arguments = vec!["request", "run", workspace, item.as_str()];
+        match self {
+            Self::NoEnvironment => {}
+            Self::UnknownEnvironment => arguments.extend(["--environment", "n2-absent"]),
+            _ => arguments.extend(["--environment", "local"]),
+        }
+        arguments.extend(["--var", var.as_str(), "--json"]);
+        sandbox.run_with(&arguments, proxy, stdin)
+    }
+
+    /// Whether the request can be built at all. Discovery and resolve parse
+    /// the same strings, so a discovery failure also stops the send.
+    fn sends(self) -> bool {
+        matches!(self, Self::NoWorkspace | Self::NoEnvironment)
+    }
+}
+
+const EARLY_RETURNS: [EarlyReturn; 4] = [
+    EarlyReturn::NoWorkspace,
+    EarlyReturn::NoEnvironment,
+    EarlyReturn::MalformedReference,
+    EarlyReturn::UnknownEnvironment,
+];
+
+/// What a `--var` secret run may show: the token stays out of stderr and out
+/// of everything Lattice reports or keeps.
+fn assert_var_secret_clean(sandbox: &Sandbox, what: &str, run: &Run) {
+    sandbox.assert_clean(what, &run.stderr);
+    if let Ok(value) = serde_json::from_str::<Value>(&run.stdout) {
+        sandbox.assert_clean(what, &value["lattice"].to_string());
+        sandbox.assert_clean(what, &value["error"].to_string());
+    }
+}
+
+#[test]
+fn var_secret_does_not_follow_a_redirect_on_any_early_return() {
+    for early in EARLY_RETURNS {
+        let what = format!("--var secret, {early:?}, redirect");
+        let landing = Host::spawn_at("[::1]:0");
+        let redirect = Host::redirect_to(&format!("{}/landing", landing.url));
+        let sandbox = Sandbox::with_fixture("secret_transport.yml", &redirect.url);
+
+        let run = early.run(&sandbox, 0, None);
+        assert_var_secret_clean(&sandbox, &what, &run);
+        landing.untouched(&what);
+        if early.sends() {
+            assert_eq!(run.code, Some(0), "{what}: {}", sandbox.scrub(&run.stderr));
+            let head = redirect.hit(&what);
+            assert!(
+                head.starts_with("GET /secret "),
+                "{what}: unexpected request line"
+            );
+            let value = sandbox.json(&what, &run);
+            assert_eq!(
+                value["response"]["status"], 302,
+                "{what}: the 302 is the answer"
+            );
+        } else {
+            assert_ne!(
+                run.code,
+                Some(0),
+                "{what}: discovery failure must not succeed"
+            );
+            redirect.untouched(&what);
+        }
+    }
+}
+
+#[test]
+fn var_secret_does_not_use_an_env_proxy_on_any_early_return() {
+    for early in EARLY_RETURNS {
+        let what = format!("--var secret, {early:?}, env proxy");
+        let proxy = Host::spawn();
+        let sandbox = Sandbox::with_fixture("secret_transport.yml", "http://127.0.0.1:9");
+
+        let run = early.run(&sandbox, 1, Some(&proxy));
+        assert_var_secret_clean(&sandbox, &what, &run);
+        proxy.untouched(&what);
+        // Direct, the target never resolves; through the proxy it would be 200.
+        assert_ne!(run.code, Some(0), "{what}: only a proxy could answer");
+    }
+}
+
+#[test]
+fn plain_requests_still_follow_redirects_and_use_an_env_proxy() {
+    // The controls for the two tests above: the same hosts and proxy work.
+    let landing = Host::spawn_at("[::1]:0");
+    let redirect = Host::redirect_to(&format!("{}/landing", landing.url));
+    let sandbox = Sandbox::with_fixture("secret_transport.yml", &redirect.url);
+    let run = sandbox.request("items/2", &[], true);
+    assert_eq!(
+        run.code,
+        Some(0),
+        "redirect: {}",
+        sandbox.scrub(&run.stdout)
+    );
+    assert!(redirect.hit("redirect").starts_with("GET /plain "));
+    assert!(landing.hit("redirect").starts_with("GET /landing "));
+
+    let proxy = Host::spawn();
+    let run = sandbox.run_with(
+        &[
+            "request",
+            "run",
+            sandbox.ws(),
+            "items/3",
+            "--environment",
+            "local",
+            "--json",
+        ],
+        Some(&proxy),
+        None,
+    );
+    assert_eq!(run.code, Some(0), "proxy: {}", sandbox.scrub(&run.stdout));
+    let head = proxy.hit("proxy");
+    assert!(
+        head.starts_with(&format!("GET {PROXY_TARGET}/plain ")),
+        "proxy: unexpected request line"
+    );
+}
+
+#[test]
+fn overlay_marks_var_secret_requests_on_every_early_return() {
+    let environments = [Environment {
+        name: "local".to_owned(),
+        color: None,
+        extends: None,
+        dot_env_file_path: None,
+        variables: vec![EnvironmentVariable::Secret(SecretVariable {
+            name: Some("token".to_owned()),
+            value_type: None,
+            disabled: false,
+        })],
+    }];
+    let request = |url: &str| HttpRequest {
+        url: Some(url.to_owned()),
+        headers: vec![Header {
+            name: "X-Token".to_owned(),
+            value: "{{token}}".to_owned(),
+            disabled: false,
+        }],
+        ..HttpRequest::default()
+    };
+    let good = request("http://127.0.0.1:9/secret");
+    let malformed = request("http://127.0.0.1:9/secret?q={{}}");
+    let var = [("token".to_owned(), TOKEN.to_owned())];
+    // An empty directory: no store can be opened, and none is needed, since
+    // every case below returns before the machine store.
+    let dir = tempfile::tempdir().unwrap();
+    let cases: [(&str, Option<&Path>, Option<&str>, &HttpRequest); 4] = [
+        ("no workspace", None, Some("local"), &good),
+        ("no environment", Some(dir.path()), None, &good),
+        (
+            "malformed reference",
+            Some(dir.path()),
+            Some("local"),
+            &malformed,
+        ),
+        (
+            "unknown environment",
+            Some(dir.path()),
+            Some("n2-absent"),
+            &good,
+        ),
+    ];
+    for (what, root, environment, request) in cases {
+        let hydration = overlay_secrets(root, environment, request, &environments, &var)
+            .unwrap_or_else(|_| panic!("{what}: hydration should not fail"));
+        assert!(
+            hydration.references_secret,
+            "{what}: a --var secret request must get the locked transport"
+        );
+        assert!(
+            hydration.overrides.is_empty(),
+            "{what}: nothing from Lattice"
+        );
+        assert!(
+            !format!("{:?}", hydration.json()).contains(TOKEN),
+            "{what}: names only"
+        );
+    }
+}
+
+#[test]
+fn secret_request_refuses_scheme_port_ip_literal_and_scheme_relative_moves() {
+    // Same host as the collection: only the scheme changes.
+    let collection = Host::spawn();
+    let authority = collection.url.strip_prefix("http://").unwrap().to_owned();
+    let other_port = Host::spawn();
+    let other_port_authority = other_port.url.strip_prefix("http://").unwrap().to_owned();
+    let v6 = Host::spawn_at("[::1]:0");
+    let v6_port = v6.url.rsplit(':').next().unwrap().to_owned();
+    let cases = [
+        ("scheme switch", format!("https://{authority}/{STORE_MARK}")),
+        (
+            "port change",
+            format!("http://{other_port_authority}/{STORE_MARK}"),
+        ),
+        ("IPv6 literal", format!("{}/{STORE_MARK}", v6.url)),
+        (
+            "long-form IPv6 literal",
+            format!("http://[0:0:0:0:0:0:0:1]:{v6_port}/{STORE_MARK}"),
+        ),
+    ];
+    for (label, value) in &cases {
+        for_each_token(
+            |token, extra, sandbox| {
+                let what = format!("apiUrl {label} with token from {token:?}");
+                sandbox.store_value("apiUrl", value);
+                sandbox.assert_refused(
+                    &what,
+                    "items/0",
+                    extra,
+                    "apiUrl",
+                    &[&collection, &other_port, &v6],
+                );
+            },
+            "host_override_names.yml",
+            &collection.url,
+        );
+    }
+
+    // The collection names its host; the store swaps in the IP literal it
+    // resolves to. A different spelling of the authority is a different pin.
+    let collection = Host::spawn();
+    let port = collection.url.rsplit(':').next().unwrap().to_owned();
+    let by_name = format!("http://localhost:{port}");
+    for_each_token(
+        |token, extra, sandbox| {
+            let what = format!("IPv4 literal for localhost with token from {token:?}");
+            sandbox.store_value("apiUrl", &format!("http://127.0.0.1:{port}/{STORE_MARK}"));
+            sandbox.assert_refused(&what, "items/0", extra, "apiUrl", &[&collection]);
+        },
+        "host_override_names.yml",
+        &by_name,
+    );
+
+    // `http:{{path}}`: a scheme-relative `//host` path is the authority.
+    let collection = Host::spawn();
+    let store = Host::spawn_at("[::1]:0");
+    let store_authority = store.url.strip_prefix("http://").unwrap().to_owned();
+    for_each_token(
+        |token, extra, sandbox| {
+            let what = format!("//host path with token from {token:?}");
+            sandbox.store_value("path", &format!("//{store_authority}/{STORE_MARK}"));
+            sandbox.assert_refused(&what, "items/5", extra, "path", &[&collection, &store]);
+        },
+        "host_override_names.yml",
+        &collection.url,
+    );
+
+    // `{{apiUrl}}{{suffix}}`: a `//host` suffix after the authority is only
+    // a path. It may be refused or sent to the collection host, never to
+    // the host it spells.
+    let collection = Host::spawn();
+    let store = Host::spawn_at("[::1]:0");
+    let store_authority = store.url.strip_prefix("http://").unwrap().to_owned();
+    for_each_token(
+        |token, extra, sandbox| {
+            let what = format!("//host suffix with token from {token:?}");
+            sandbox.store_value("suffix", &format!("//{store_authority}/{STORE_MARK}"));
+            let run = sandbox.request("items/6", extra, true);
+            sandbox.assert_clean(&what, &run.stderr);
+            store.untouched(&what);
+            while collection.requests.try_recv().is_ok() {}
+        },
+        "host_override_names.yml",
+        &collection.url,
+    );
 }

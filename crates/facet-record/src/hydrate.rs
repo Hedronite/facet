@@ -43,7 +43,8 @@ pub struct Hydration {
     /// logged; only ever compared against.
     pub redact: Vec<String>,
     /// The request references a declared secret, including one satisfied
-    /// by `--var`. Not part of `lattice.secrets`.
+    /// by `--var`, or secret discovery could not run. Not part of
+    /// `lattice.secrets`.
     pub references_secret: bool,
 }
 
@@ -132,14 +133,27 @@ pub fn overlay_secrets(
     environments: &[Environment],
     user_overrides: &[(String, String)],
 ) -> Result<Hydration, HydrateError> {
-    let (Some(root), Some(environment)) = (root, environment) else {
-        return Ok(Hydration::default());
+    // Discovery needs a selected environment. Without it, a `--var` secret
+    // would otherwise send with redirects and an env proxy. Lock, and do
+    // not put a value in the error.
+    let Some(environment) = environment else {
+        return Ok(idle(Vec::new(), true));
+    };
+    let Some(root) = root else {
+        let Ok(referenced) = discover_request_variables(request, environments, Some(environment))
+        else {
+            return Ok(idle(Vec::new(), true));
+        };
+        return Ok(idle(
+            secret_var_redact(&referenced, user_overrides),
+            referenced.iter().any(|info| info.secret),
+        ));
     };
     // Discovery errors (unknown environment, bad inheritance) are core's to
-    // report at resolve time with the right category; do nothing here.
+    // report at resolve time with the right category. Lock transport anyway.
     let Ok(referenced) = discover_request_variables(request, environments, Some(environment))
     else {
-        return Ok(Hydration::default());
+        return Ok(idle(Vec::new(), true));
     };
     // Includes secrets satisfied by `--var`. Those still make this a
     // secret-referencing request, so a store host must not apply.
@@ -374,11 +388,28 @@ fn hosts_differ(declared: &str, overridden: &str) -> bool {
     if declared == overridden {
         return false;
     }
+    if authority_slice(declared).is_some_and(authority_forbidden)
+        || authority_slice(overridden).is_some_and(authority_forbidden)
+    {
+        return true;
+    }
     match (parse_authority(declared), parse_authority(overridden)) {
         (Some(left), Some(right)) => authority_conflict(&left, &right),
         (None, None) => canonical_blob(declared) != canonical_blob(overridden),
         _ => true,
     }
+}
+
+fn authority_slice(url: &str) -> Option<&str> {
+    let (_, rest) = url.trim().split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    Some(&rest[..end])
+}
+
+fn authority_forbidden(authority: &str) -> bool {
+    authority
+        .chars()
+        .any(|character| character == '\\' || character == '%' || character.is_control())
 }
 
 fn authority_conflict(declared: &AuthorityPin, overridden: &AuthorityPin) -> bool {
@@ -418,77 +449,43 @@ fn canonical_blob(url: &str) -> String {
 }
 
 fn parse_authority(url: &str) -> Option<AuthorityPin> {
-    let (scheme, rest) = url.trim().split_once("://")?;
-    if scheme.is_empty()
-        || !scheme.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
-        })
-    {
-        return None;
-    }
-    let rest = rest.split_once('#').map(|(head, _)| head).unwrap_or(rest);
-    let rest = rest.split_once('?').map(|(head, _)| head).unwrap_or(rest);
-    let authority = rest.split_once('/').map(|(head, _)| head).unwrap_or(rest);
-    if authority.is_empty() {
-        return None;
-    }
-    let (userinfo, hostport) = match authority.rsplit_once('@') {
-        Some((info, host)) => (Some(info), host),
-        None => (None, authority),
-    };
-    let (host, port) = if let Some(literal) = hostport.strip_prefix('[') {
-        let (address, after) = literal.split_once(']')?;
-        let port = parse_port_suffix(after)?;
-        (HostPin::Ip(address.parse::<IpAddr>().ok()?), port)
-    } else {
-        let (host, port) = split_host_port(hostport)?;
-        if host.is_empty() {
-            return None;
-        }
-        let mut dns = host.to_ascii_lowercase();
-        if dns.ends_with('.') {
-            dns.pop();
-        }
-        let host = if let Ok(address) = dns.parse::<IpAddr>() {
-            HostPin::Ip(address)
-        } else if dns.is_empty() {
-            return None;
-        } else {
+    let parsed = url::Url::parse(url.trim()).ok()?;
+    let host = match parsed.host()? {
+        url::Host::Domain(domain) => {
+            let mut dns = domain.to_ascii_lowercase();
+            if dns.ends_with('.') {
+                dns.pop();
+            }
+            if dns.is_empty() {
+                return None;
+            }
             HostPin::Dns(dns)
-        };
-        let port = match port {
-            Some(value) => Some(value.parse::<u16>().ok()?),
-            None => None,
-        };
-        (host, port)
+        }
+        url::Host::Ipv4(address) => HostPin::Ip(IpAddr::V4(address)),
+        url::Host::Ipv6(address) => HostPin::Ip(IpAddr::V6(address)),
     };
     Some(AuthorityPin {
-        scheme: scheme.to_ascii_lowercase(),
+        scheme: parsed.scheme().to_ascii_lowercase(),
         host,
-        port,
-        has_userinfo: userinfo.is_some_and(|info| !info.is_empty()),
+        port: parsed.port(),
+        has_userinfo: !parsed.username().is_empty() || parsed.password().is_some(),
     })
 }
 
-fn parse_port_suffix(after: &str) -> Option<Option<u16>> {
-    if after.is_empty() {
-        return Some(None);
-    }
-    let port = after.strip_prefix(':')?;
-    if port.is_empty() || !port.chars().all(|character| character.is_ascii_digit()) {
-        return None;
-    }
-    Some(Some(port.parse().ok()?))
-}
-
-fn split_host_port(hostport: &str) -> Option<(&str, Option<&str>)> {
-    if let Some((host, port)) = hostport.rsplit_once(':')
-        && !port.is_empty()
-        && port.chars().all(|character| character.is_ascii_digit())
-    {
-        return Some((host, Some(port)));
-    }
-    Some((hostport, None))
+fn secret_var_redact(
+    referenced: &[probe_core::RequestVariableInfo],
+    user_overrides: &[(String, String)],
+) -> Vec<String> {
+    referenced
+        .iter()
+        .filter(|info| info.secret)
+        .filter_map(|info| {
+            user_overrides
+                .iter()
+                .find(|(name, _)| name == &info.name)
+                .map(|(_, value)| value.clone())
+        })
+        .collect()
 }
 
 #[cfg(test)]

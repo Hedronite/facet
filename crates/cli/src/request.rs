@@ -1,8 +1,9 @@
 use std::{borrow::Cow, io::Read, path::PathBuf};
 
 use probe_core::{
-    HttpRequest, RequestUpdate, RequestVariableInfo, VariableUsage, discover_request_variables,
-    resolve_environment_with_overrides, resolve_request, resolve_request_strict,
+    Environment, HttpRequest, RequestUpdate, RequestVariableInfo, VariableUsage,
+    discover_request_variables, resolve_environment_with_overrides, resolve_request,
+    resolve_request_strict,
 };
 use probe_http::{ExecutionOptions, HttpEngine, HttpResponse};
 use serde_json::json;
@@ -187,6 +188,13 @@ pub(crate) fn run(
     stdin: &mut impl Read,
 ) -> Result<CommandOutput, CliError> {
     let loaded = load(input, stdin)?;
+    let template = unresolved_request(&loaded, selector)?;
+    let lock_transport = secret_transport_locked(
+        template,
+        loaded.workspace().environments(),
+        environment,
+        variables,
+    );
     let request = selected_request(&loaded, selector, environment, variables, strict_variables)?;
     let options = ExecutionOptions {
         base_directory: input.base_directory(),
@@ -198,7 +206,24 @@ pub(crate) fn run(
         .map_err(|error| CliError::runtime(&error))?;
     let response = runtime.block_on(async {
         let engine = HttpEngine::new().map_err(CliError::http)?;
-        if let Some(output) = output {
+        if lock_transport {
+            if let Some(output) = output {
+                engine
+                    .execute_cancellable_to_file_locked(
+                        &request,
+                        &options,
+                        output,
+                        tokio::signal::ctrl_c(),
+                    )
+                    .await
+                    .map_err(CliError::http)
+            } else {
+                engine
+                    .execute_cancellable_locked(&request, &options, tokio::signal::ctrl_c())
+                    .await
+                    .map_err(CliError::http)
+            }
+        } else if let Some(output) = output {
             engine
                 .execute_cancellable_to_file(&request, &options, output, tokio::signal::ctrl_c())
                 .await
@@ -211,6 +236,39 @@ pub(crate) fn run(
         }
     })?;
     Ok(response_output(&request, &response, output))
+}
+
+fn unresolved_request<'a>(
+    loaded: &'a probe_opencollection::LoadedWorkspace,
+    selector: &str,
+) -> Result<&'a HttpRequest, CliError> {
+    let key = loaded
+        .request_key(selector)
+        .ok_or_else(|| CliError::request_not_found(selector))?;
+    Ok(loaded
+        .workspace()
+        .request(key)
+        .expect("repository request key must resolve"))
+}
+
+/// Locked send: a `--var` for a declared secret, or discovery did not run.
+/// The value is not part of this decision.
+fn secret_transport_locked(
+    request: &HttpRequest,
+    environments: &[Environment],
+    environment: Option<&str>,
+    variables: &[(String, String)],
+) -> bool {
+    let Some(environment) = environment else {
+        return true;
+    };
+    let Ok(referenced) = discover_request_variables(request, environments, Some(environment))
+    else {
+        return true;
+    };
+    referenced
+        .iter()
+        .any(|info| info.secret && variables.iter().any(|(name, _)| name == &info.name))
 }
 
 fn selected_request<'a>(
