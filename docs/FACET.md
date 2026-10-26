@@ -57,7 +57,7 @@ Install paths for strangers: [install.md](install.md) (`facet-lattice` on crates
 
 ```bash
 cargo build --release -p probe-cli -p facet-cli
-facet --version   # facet 0.7.0 (probe 0.5.9)
+facet --version   # facet 0.7.1 (probe 0.5.9)
 probe --version   # probe 0.5.9
 ```
 

@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/Hedronite/facet/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Hedronite/facet/ci.yml?branch=main&style=flat&colorA=1A1A1A&colorB=C9A227&label=ci" alt="CI"></a>
-  <a href="https://github.com/Hedronite/facet/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/Facet-v0.7.0-C9A227?style=flat&colorA=1A1A1A" alt="Facet v0.7.0"></a>
+  <a href="https://github.com/Hedronite/facet/releases/tag/v0.7.1"><img src="https://img.shields.io/badge/Facet-v0.7.1-C9A227?style=flat&colorA=1A1A1A" alt="Facet v0.7.1"></a>
   <a href="https://crates.io/crates/facet-lattice"><img src="https://img.shields.io/crates/v/facet-lattice?style=flat&colorA=1A1A1A&colorB=C9A227" alt="facet-lattice on crates.io"></a>
   <a href="https://rustup.rs"><img src="https://img.shields.io/badge/Rust-1.95-F46623?style=flat&colorA=1A1A1A&logo=rust&logoColor=white" alt="Rust 1.95"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-C9A227?style=flat&colorA=1A1A1A" alt="License"></a>
@@ -36,7 +36,7 @@
 
 ---
 
-> **Status:** In production use as daily-driver / dogfood local-first API client (CLI/TUI + facet-lattice). 0.7.0 on main (next release); 0.6.0 released (Sep 29, 2026). WebSocket/GraphQL/gRPC on the roadmap. Not a toy reference.
+> **Status:** In production use as daily-driver / dogfood local-first API client (CLI/TUI + facet-lattice). 0.7.1 on main (next release); 0.7.0 released (Oct 25, 2026). WebSocket/GraphQL/gRPC on the roadmap. Not a toy reference.
 
 
 **Facet** is the terminal product: a `facet` CLI and Ratatui TUI on the same OpenCollection YAML as [Probe](https://github.com/crizant/probe). **[facet-lattice](https://crates.io/crates/facet-lattice)** is the run-history library underneath — SQLite for runs, bodies, timings, and sessions beside your YAML on disk.
@@ -45,7 +45,7 @@ Coding agents should use the bundled skill and the CLI ([Agent use](#agent-use))
 
 Collections stay YAML; Git stays the sync layer. No account or hosted control plane. The `facet` binary coexists with `probe` on `PATH`.
 
-**0.7.0** · OpenCollection YAML · Ratatui TUI · SQLite run history
+**0.7.1** · OpenCollection YAML · Ratatui TUI · SQLite run history
 
 ## Quick start
 
@@ -70,10 +70,10 @@ The Cargo package is **`facet-lattice`** (not `lattice` — that name on crates.
 
 The CLI is **not** `cargo install facet`. The Cargo package is `facet-cli`; the binary is `facet`.
 
-**v0.7.0 tag** (primary, Rust required):
+**v0.7.1 tag** (primary, Rust required):
 
 ```bash
-cargo install --git https://github.com/Hedronite/facet --tag v0.7.0 --locked --bin facet facet-cli
+cargo install --git https://github.com/Hedronite/facet --tag v0.7.1 --locked --bin facet facet-cli
 ```
 
 **From main** (secondary): `cargo install --git https://github.com/Hedronite/facet --locked --bin facet facet-cli`, or clone and `cargo build --release -p probe-cli -p facet-cli`. See [docs/install.md](docs/install.md).
@@ -186,7 +186,7 @@ docs/FACET.md             # Facet contracts
 
 ## Status
 
-**0.7.0** on `main` (next release). **0.6.0** released (Sep 29, 2026). The `facet-lattice` crate is a separate version axis and does not follow the CLI: [`facet-lattice` 0.5.9](https://crates.io/crates/facet-lattice) is live on crates.io, with 0.5.8 still up (no yank).
+**0.7.1** on `main` (next release). **0.7.0** released (Oct 25, 2026). The `facet-lattice` crate is a separate version axis and does not follow the CLI: [`facet-lattice` 0.5.9](https://crates.io/crates/facet-lattice) is live on crates.io, with 0.5.8 still up (no yank).
 
 - **facet-lattice**: SQLite default. Scrubbed crate package published as **0.5.9**.
 - **CLI + TUI**: shipped. Deterministic JSON, SQL over history, Ratatui interface.

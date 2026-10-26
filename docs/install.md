@@ -51,14 +51,14 @@ See also [crates/lattice/README.md](../crates/lattice/README.md) and [Lattice en
 
 The `facet` executable is **not** on crates.io as a one-line `cargo install facet`. The Cargo package is `facet-cli`; the installed binary is `facet`.
 
-### From the v0.7.0 tag (primary)
+### From the v0.7.1 tag (primary)
 
 Requires a Rust toolchain. This installs the `facet` binary from package `facet-cli` at the release tag:
 
 ```bash
-cargo install --git https://github.com/Hedronite/facet --tag v0.7.0 --locked --bin facet facet-cli
+cargo install --git https://github.com/Hedronite/facet --tag v0.7.1 --locked --bin facet facet-cli
 facet --version
-# facet 0.7.0 (probe 0.5.9)
+# facet 0.7.1 (probe 0.5.9)
 ```
 
 ### From main (secondary)
@@ -92,13 +92,13 @@ facet --version
 ```bash
 export PATH="$HOME/.local/bin:$PATH"   # if needed
 facet --version
-# facet 0.7.0 (probe 0.5.9)
+# facet 0.7.1 (probe 0.5.9)
 ```
 
 ## Verify install
 
 ```bash
-facet --version          # human: facet 0.7.0 (probe 0.5.9)
+facet --version          # human: facet 0.7.1 (probe 0.5.9)
 facet --version --json   # structured version + probeVersion
 facet doctor --json      # machine + workspace stores, secrets backend, env flags
 ```
@@ -112,11 +112,11 @@ to be true.
 
 | Artifact | Source | Version |
 | --- | --- | --- |
-| `facet` CLI / `facet-tui` / `facet-record` | `[workspace.package].version`, GitHub release tag | **0.7.0** (when tagged) |
+| `facet` CLI / `facet-tui` / `facet-record` | `[workspace.package].version`, GitHub release tag | **0.7.1** (when tagged) |
 | `facet-lattice` crate | [crates.io](https://crates.io/crates/facet-lattice) | **0.5.9** live (0.5.8 also up) |
 | `probe-*` crates | vendored Probe cut, pinned per crate | **0.5.9** |
 
-`facet --version` prints the first and third together: `facet 0.7.0 (probe 0.5.9)`.
+`facet --version` prints the first and third together: `facet 0.7.1 (probe 0.5.9)`.
 The `facet-lattice` crate is never bumped to match the CLI, and the probe crates
 are never bumped to make that parenthetical look symmetrical. **0.5.8** stays on
 crates.io (no yank). `scripts/version-check.sh` is the gate that keeps the git

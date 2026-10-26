@@ -30,7 +30,7 @@ resolver = "2"
 # `facet --version` prints axes 1 and 3 together: `facet <facet> (probe <probe>)`.
 # scripts/version-check.sh is the gate that keeps tag == Cargo == binary.
 [workspace.package]
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
