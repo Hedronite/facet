@@ -16,6 +16,7 @@ probe-core = { path = "../core" }
 probe-http = { path = "../http" }
 serde_json = "1"
 url = "2.5.8"
+zeroize = "1.9.0"
 
 [lints]
 workspace = true

@@ -9,6 +9,7 @@
 mod diff;
 mod github;
 mod hydrate;
+pub mod redact;
 mod transport;
 
 use std::path::Path;
@@ -19,6 +20,7 @@ pub use diff::{
 };
 pub use github::{api_fallback, auth_token_for};
 pub use hydrate::{HydrateError, Hydration, overlay_secrets};
+pub use redact::Redactor;
 pub use transport::{http_engine_from_env, http_engine_from_kubeconfig, kube_api_base_from_env};
 
 use lattice::{
