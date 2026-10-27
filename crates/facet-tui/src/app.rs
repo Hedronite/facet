@@ -5456,7 +5456,7 @@ mod tests {
         );
     }
 
-    /// Vini #53 N-1: a send with a workspace root but no selector cannot tie
+    /// SecOps review #53 N-1: a send with a workspace root but no selector cannot tie
     /// a `facet:` rule to its request, so it records nothing. The request is
     /// still sent. No `facet:` key is present, so only the missing selector
     /// withholds the row.
