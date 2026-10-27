@@ -520,14 +520,7 @@ mod tests {
         // Empty (the TUI with a root and no selector), odd token counts,
         // out-of-range, a non-numeric index, and a walk that falls out of
         // a mapping.
-        for selector in [
-            "",
-            "items",
-            "items/0/items",
-            "items/9",
-            "items/x",
-            "items/0/items",
-        ] {
+        for selector in ["", "items", "items/0/items", "items/9", "items/x"] {
             assert_eq!(
                 expect(record_policy(Some(&file), selector)),
                 RecordPolicy::Forbidden,
@@ -543,11 +536,19 @@ mod tests {
                 "{selector:?}"
             );
         }
-        // A node that is not a mapping.
+        // A node that is not a mapping, in either shape.
         let (file, _temp) =
             bundled("opencollection: 1.0.0\nbundled: true\nitems:\n  - plain-text-no-mapping\n");
         assert_eq!(
             expect(record_policy(Some(&file), "items/0")),
+            RecordPolicy::Forbidden
+        );
+        let (dir, _temp) = unbundled(
+            Some("opencollection: 1.0.0\nbundled: true\nitems:\n  - plain-text-no-mapping\n"),
+            &[],
+        );
+        assert_eq!(
+            expect(record_policy(Some(&dir), "items/0")),
             RecordPolicy::Forbidden
         );
         // Valid selectors keep their results: the first item forbids, the
