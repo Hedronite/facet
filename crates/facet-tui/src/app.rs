@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use facet_record::{ConfigOverrides, RecordRequest, Recording, record};
+use facet_record::{ConfigOverrides, RecordPolicy, RecordRequest, Recording, record};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use lattice::{
@@ -3076,20 +3076,30 @@ impl App {
     }
 
     async fn run_selected(&mut self) -> Result<(), TuiError> {
-        if self.pending.is_some() {
-            return Ok(());
-        }
-        // Facts for Lattice, captured before the task takes the request.
-        let root = self.base_directory();
         let selector = self
             .tree
             .selected_request_key()
             .and_then(|key| self.loaded.as_ref()?.request_selector(key))
             .map(str::to_string);
+        self.send_selected(selector).await
+    }
+
+    /// Sends the selected request and records it under `selector`. Split
+    /// from [`Self::run_selected`] so a test can send without a selector.
+    async fn send_selected(&mut self, selector: Option<String>) -> Result<(), TuiError> {
+        if self.pending.is_some() {
+            return Ok(());
+        }
+        // Facts for Lattice, captured before the task takes the request.
+        let root = self.base_directory();
         // The `facet:` key is read back from the source before anything is
         // sent. An invalid key stops the send and names the key path only.
         let policy =
             match facet_record::record_policy(root.as_deref(), selector.as_deref().unwrap_or("")) {
+                // With a source on disk but no selector, no `facet:` rule
+                // can be tied to this request: record nothing. The request
+                // is still sent.
+                Ok(_) if root.is_some() && selector.is_none() => RecordPolicy::Forbidden,
                 Ok(policy) => policy,
                 Err(error) => {
                     self.status = RunStatus::Failed(format!("{}: {error}", error.category()));
@@ -5338,8 +5348,9 @@ mod tests {
             .len()
     }
 
-    #[tokio::test]
-    async fn forbidden_request_is_sent_but_writes_no_row() {
+    /// A loopback server that answers one request with `200 ok`. Joining
+    /// the handle proves the request reached it.
+    fn one_shot_server() -> (String, std::thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/ping", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
@@ -5351,16 +5362,26 @@ mod tests {
                 .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok")
                 .unwrap();
         });
-        let (dir, mut app) =
-            app_with_policy("policy-forbid", &url, "facet: { record: false }").await;
+        (url, server)
+    }
 
-        app.run_selected().await.unwrap();
+    async fn finish_send(app: &mut App) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.is_in_flight() {
             assert!(Instant::now() < deadline, "send did not finish");
             app.poll_pending();
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn forbidden_request_is_sent_but_writes_no_row() {
+        let (url, server) = one_shot_server();
+        let (dir, mut app) =
+            app_with_policy("policy-forbid", &url, "facet: { record: false }").await;
+
+        app.run_selected().await.unwrap();
+        finish_send(&mut app).await;
         server.join().expect("the request reached the server");
 
         assert!(
@@ -5433,5 +5454,31 @@ mod tests {
             hydrated_lock(TransportLock::SecretReferenced, TransportLock::Open),
             TransportLock::SecretReferenced
         );
+    }
+
+    /// Vini #53 N-1: a send with a workspace root but no selector cannot tie
+    /// a `facet:` rule to its request, so it records nothing. The request is
+    /// still sent. No `facet:` key is present, so only the missing selector
+    /// withholds the row.
+    #[tokio::test]
+    async fn send_without_a_selector_is_sent_but_writes_no_row() {
+        let (url, server) = one_shot_server();
+        let (dir, mut app) = app_with_policy("policy-no-selector", &url, "# no facet key").await;
+        assert!(app.workspace_root().is_some(), "a root is present");
+
+        app.send_selected(None).await.unwrap();
+        finish_send(&mut app).await;
+        server.join().expect("the request reached the server");
+
+        assert!(
+            matches!(app.status, RunStatus::Done { status: 200, .. }),
+            "{:?}",
+            app.status
+        );
+        let summary = app.last_recording().expect("record was consulted");
+        assert_eq!(summary.note, "facet_policy");
+        assert_eq!(summary.run_id, None);
+        assert_eq!(stored_runs(&dir), 0);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
