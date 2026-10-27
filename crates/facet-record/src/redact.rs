@@ -5,9 +5,10 @@
 //!
 //! - Values shorter than [`MIN_REDACT_LEN`] bytes are ignored: they would
 //!   mangle unrelated text.
-//! - Each value is matched exactly and in its URL-encoded forms
-//!   (percent-encoded with `%20` or `+` for a space, upper- or lower-case
-//!   hex).
+//! - Each value is matched exactly and in its URL-encoded forms: fully
+//!   percent-encoded with `%20` or `+` for a space, in upper- or lower-case
+//!   hex, and as a URL parser encodes it in a query or a path (only the
+//!   bytes those parts cannot hold, so `/` stays).
 //! - Headers named in `SENSITIVE_HEADERS` are masked whatever their value.
 //! - Known values are held in [`Zeroizing`] and wiped on drop. `Debug` shows
 //!   only how many there are.
@@ -180,7 +181,7 @@ pub fn is_sensitive_header(name: &str) -> bool {
 }
 
 /// `value`, then its percent-encoded and form-encoded forms in upper- and
-/// lower-case hex, without repeats.
+/// lower-case hex, and its query and path forms, without repeats.
 fn encoded_forms(value: &str) -> Vec<Zeroizing<String>> {
     let mut forms = vec![Zeroizing::new(value.to_owned())];
     for space in ["%20", "+"] {
@@ -196,6 +197,17 @@ fn encoded_forms(value: &str) -> Vec<Zeroizing<String>> {
         Zeroizing::new(url::form_urlencoded::byte_serialize(value.as_bytes()).collect());
     if !forms.contains(&serialized) {
         forms.push(serialized);
+    }
+    let mut parsed = url::Url::parse("http://h/").expect("static URL");
+    parsed.set_query(Some(value));
+    let query = Zeroizing::new(parsed.query().unwrap_or_default().to_owned());
+    parsed.set_query(None);
+    parsed.set_path(&format!("/{value}"));
+    let path = Zeroizing::new(parsed.path()[1..].to_owned());
+    for form in [query, path] {
+        if !forms.contains(&form) {
+            forms.push(form);
+        }
     }
     forms
 }
@@ -305,6 +317,7 @@ mod tests {
             "x redact-canary+value%2F1 y",
             "x redact-canary%20value%2f1 y",
             "x redact-canary+value%2f1 y",
+            "x redact-canary%20value/1 y",
         ] {
             assert_eq!(redactor.text(text), "x <redacted> y", "a form leaked");
         }

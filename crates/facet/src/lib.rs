@@ -20,8 +20,12 @@
 
 #![forbid(unsafe_code)]
 
-use std::io::{self, Read};
+use std::{
+    borrow::Cow,
+    io::{self, Read},
+};
 
+use facet_record::Redactor;
 use serde_json::{Value, json};
 
 mod args;
@@ -156,6 +160,19 @@ impl CommandOutput {
     /// print (the MCP server).
     pub(crate) fn into_parts(self) -> (Value, Vec<String>, u8) {
         (self.json, self.warnings, self.exit_code)
+    }
+
+    /// The known-values pass over everything this output prints: every
+    /// JSON string, the human view, warnings and `error[...]` lines.
+    pub(crate) fn redact(mut self, redactor: &Redactor) -> Self {
+        redact_strings(&mut self.json, &|text| owned(redactor.text(text)));
+        if let Cow::Owned(human) = redactor.bytes(&self.human) {
+            self.human = human;
+        }
+        for line in self.warnings.iter_mut().chain(self.errors.iter_mut()) {
+            *line = error::redact_message(redactor, line);
+        }
+        self
     }
 
     /// A successful document that still signals an assertion outcome
@@ -399,6 +416,37 @@ fn remove_flags(args: &mut Vec<String>, flags: &[&str]) -> usize {
         .count();
     args.retain(|argument| !flags.contains(&argument.as_str()));
     count
+}
+
+/// Replaces each string in `value` (not object keys) for which `redact`
+/// returns a new one.
+pub(crate) fn redact_strings(value: &mut Value, redact: &dyn Fn(&str) -> Option<String>) {
+    match value {
+        Value::String(text) => {
+            if let Some(redacted) = redact(text) {
+                *text = redacted;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_strings(item, redact);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                redact_strings(item, redact);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+/// `Some` when a redaction changed `text`.
+pub(crate) fn owned(text: Cow<'_, str>) -> Option<String> {
+    match text {
+        Cow::Owned(text) => Some(text),
+        Cow::Borrowed(_) => None,
+    }
 }
 
 pub(crate) fn versioned_json(mut value: Value) -> Value {
