@@ -581,28 +581,20 @@ fn discovery_failure_is_its_own_transport_lock_branch() {
     let secret = request("/secret", true);
     let malformed = request("/malformed?q={{}}", false);
     let malformed_secret = request("/malformed?q={{}}", true);
-    let none = |_: &str| false;
-    let token = |name: &str| name == "token";
-
-    let cases: [(
-        &str,
-        &HttpRequest,
-        Option<&str>,
-        &dyn Fn(&str) -> bool,
-        TransportLock,
-    ); 9] = [
+    // (what, request, selected environment, `--var token` supplied, lock)
+    let cases = [
         (
             "malformed reference, no environment",
             &malformed,
             None,
-            &none,
+            false,
             TransportLock::DiscoveryFailed,
         ),
         (
             "malformed reference, environment selected",
             &malformed,
             Some("local"),
-            &none,
+            false,
             TransportLock::DiscoveryFailed,
         ),
         // A supplied `--var` would make this `VarUnclassified` if discovery
@@ -611,54 +603,56 @@ fn discovery_failure_is_its_own_transport_lock_branch() {
             "malformed reference, no environment, --var token",
             &malformed_secret,
             None,
-            &token,
+            true,
             TransportLock::DiscoveryFailed,
         ),
         (
             "unknown environment",
             &plain,
             Some("n2b-absent"),
-            &none,
+            false,
             TransportLock::DiscoveryFailed,
         ),
         (
             "unknown environment, --var token",
             &secret,
             Some("n2b-absent"),
-            &token,
+            true,
             TransportLock::DiscoveryFailed,
         ),
         (
             "plain, no environment",
             &plain,
             None,
-            &none,
+            false,
             TransportLock::Open,
         ),
         (
             "--var token, no environment",
             &secret,
             None,
-            &token,
+            true,
             TransportLock::VarUnclassified,
         ),
         (
             "secret reference, environment selected",
             &secret,
             Some("local"),
-            &none,
+            false,
             TransportLock::SecretReferenced,
         ),
         (
             "plain, environment selected",
             &plain,
             Some("local"),
-            &token,
+            true,
             TransportLock::Open,
         ),
     ];
     for (what, request, selected, supplied, expected) in cases {
-        let lock = transport_lock(request, &environments, selected, supplied);
+        let lock = transport_lock(request, &environments, selected, |name| {
+            supplied && name == "token"
+        });
         assert_eq!(lock, expected, "{what}");
         assert_eq!(
             lock.is_locked(),
