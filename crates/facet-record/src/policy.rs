@@ -16,6 +16,12 @@
 //! is a [`PolicyError`] that names the key path and never echoes a value.
 //! Outside `facet:` nothing is inspected: unknown YAML stays accepted and
 //! preserved by the loader, exactly as before.
+//!
+//! Whatever failed for a source that was given — unreadable, unparseable,
+//! no collection file, a vanished request file — is drift that fails
+//! closed: [`RecordPolicy::Forbidden`], so the send still happens but
+//! nothing is recorded. Only `None` (an in-memory or stdin workspace)
+//! has nothing to re-read and stays allowed.
 use std::{fmt, fs, path::Path};
 
 use serde_yaml_ng::{Mapping, Value};
@@ -96,25 +102,33 @@ pub fn record_policy(source: Option<&Path>, selector: &str) -> Result<RecordPoli
         return Ok(RecordPolicy::Allowed);
     };
     if source.is_file() {
-        let document = document_at(source);
+        let Some(document) = document_at(source) else {
+            return Ok(RecordPolicy::Forbidden);
+        };
         return request_policy(&document, selector);
     }
     if source.is_dir() {
         let Some(config) = collection_file(source) else {
-            // Not a layout the loader accepts either: no rule holds.
-            return Ok(RecordPolicy::Allowed);
+            // No collection file: the loader would have refused it too; a
+            // `record` rule could be hiding in one.
+            return Ok(RecordPolicy::Forbidden);
         };
-        let document = document_at(&config);
+        let Some(document) = document_at(&config) else {
+            return Ok(RecordPolicy::Forbidden);
+        };
         if is_bundled(&document) {
             return request_policy(&document, selector);
         }
-        let item = document_at(&source.join(selector));
+        let Some(item) = document_at(&source.join(selector)) else {
+            // The request file is gone: its rule is unreadable.
+            return Ok(RecordPolicy::Forbidden);
+        };
         let collection_rule = rule_of(&document)?;
         let item_rule = rule_of(&item)?;
         return combine(collection_rule, item_rule);
     }
     // The source vanished between load and now; nothing to re-read.
-    Ok(RecordPolicy::Allowed)
+    Ok(RecordPolicy::Forbidden)
 }
 
 /// A whole bundled collection: walk the structural `items/…` selector to
@@ -218,16 +232,15 @@ fn collection_file(root: &Path) -> Option<std::path::PathBuf> {
         .find(|path| fs::metadata(path).is_ok_and(|meta| meta.is_file()))
 }
 
-/// Parses a source file, or `Null` when it cannot be read or parsed.
+/// Parses a source file that has to exist: `None` fails closed.
 ///
-/// The source was validated when the workspace loaded, so only on-disk
-/// drift between load and send lands here; a failed or vanished source has
-/// no rule worth refusing a send for.
-fn document_at(path: &Path) -> Value {
+/// Only on-disk drift between load and send lands here, and a rule that
+/// may have existed must not be lost: a source that cannot be read or
+/// parsed counts as forbidden.
+fn document_at(path: &Path) -> Option<Value> {
     fs::read_to_string(path)
         .ok()
         .and_then(|source| serde_yaml_ng::from_str(&source).ok())
-        .unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
@@ -271,12 +284,30 @@ mod tests {
     );
 
     #[test]
-    fn nothing_reachable_is_the_default() {
+    fn nothing_given_means_allowed() {
         let policy = expect(record_policy(None, "items/0"));
         assert_eq!(policy, RecordPolicy::Allowed);
-        let gone = Path::new("/g3-never-created/workspace.yml");
-        let policy = expect(record_policy(Some(gone), "items/0"));
-        assert_eq!(policy, RecordPolicy::Allowed);
+    }
+
+    #[test]
+    fn unreadable_unparseable_or_vanished_sources_fail_closed() {
+        let a_gone_source = Path::new("/g3-never-created/workspace.yml");
+        assert_eq!(
+            expect(record_policy(Some(a_gone_source), "items/0")),
+            RecordPolicy::Forbidden
+        );
+        // An unparseable bundled file cannot name a rule, so it forbids.
+        let temporary = tempfile::tempdir().unwrap();
+        let broken = temporary.path().join("workspace.yml");
+        fs::write(
+            &broken,
+            "opencollection: 1.0.0\nbundled: true\nitems: [unclosed\n",
+        )
+        .unwrap();
+        assert_eq!(
+            expect(record_policy(Some(&broken), "items/0")),
+            RecordPolicy::Forbidden
+        );
     }
 
     #[test]
@@ -405,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn unbundled_layout_and_its_missing_collection_file() {
+    fn unbundled_layout_and_its_fail_closed_cases() {
         let collection = "opencollection: 1.0.0\nbundled: false\nfacet:\n  record: never\n";
         let one = "info:\n  type: http\n  name: One\nfacet:\n  record: false\n";
         let (dir, _temp) = unbundled(
@@ -420,11 +451,17 @@ mod tests {
             expect(record_policy(Some(&dir), "two.yml")),
             RecordPolicy::Forbidden
         );
+        // A vanished request file cannot name a rule, so it forbids.
+        assert_eq!(
+            expect(record_policy(Some(&dir), "gone.yml")),
+            RecordPolicy::Forbidden
+        );
 
+        // A directory the loader would refuse too: no collection file.
         let (bare, _temp) = unbundled(None, &[("one.yml", one)]);
         assert_eq!(
             expect(record_policy(Some(&bare), "one.yml")),
-            RecordPolicy::Allowed
+            RecordPolicy::Forbidden
         );
     }
 
