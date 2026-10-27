@@ -31,6 +31,10 @@ use std::{
     time::Duration,
 };
 
+use probe_core::{
+    Environment, EnvironmentVariable, Header, HttpRequest, SecretVariable, TransportLock,
+    transport_lock,
+};
 use serde_json::Value;
 
 const TOKEN: &str = "n2b-token-canary-not-a-credential";
@@ -543,6 +547,127 @@ fn discovery_failure_locks_transport() {
             .var(Var::Token),
         Lock::NotSent,
     );
+}
+
+/// The predicate itself, so a discovery failure cannot hide behind another
+/// locked branch: the binaries above would stay green if it did.
+#[test]
+fn discovery_failure_is_its_own_transport_lock_branch() {
+    let environments = [Environment {
+        name: "local".to_owned(),
+        color: None,
+        extends: None,
+        dot_env_file_path: None,
+        variables: vec![EnvironmentVariable::Secret(SecretVariable {
+            name: Some("token".to_owned()),
+            value_type: None,
+            disabled: false,
+        })],
+    }];
+    let request = |url: &str, token: bool| HttpRequest {
+        url: Some(format!("http://127.0.0.1:9{url}")),
+        headers: if token {
+            vec![Header {
+                name: "X-Token".to_owned(),
+                value: "{{token}}".to_owned(),
+                disabled: false,
+            }]
+        } else {
+            Vec::new()
+        },
+        ..HttpRequest::default()
+    };
+    let plain = request("/plain", false);
+    let secret = request("/secret", true);
+    let malformed = request("/malformed?q={{}}", false);
+    let malformed_secret = request("/malformed?q={{}}", true);
+    let none = |_: &str| false;
+    let token = |name: &str| name == "token";
+
+    let cases: [(
+        &str,
+        &HttpRequest,
+        Option<&str>,
+        &dyn Fn(&str) -> bool,
+        TransportLock,
+    ); 9] = [
+        (
+            "malformed reference, no environment",
+            &malformed,
+            None,
+            &none,
+            TransportLock::DiscoveryFailed,
+        ),
+        (
+            "malformed reference, environment selected",
+            &malformed,
+            Some("local"),
+            &none,
+            TransportLock::DiscoveryFailed,
+        ),
+        // A supplied `--var` would make this `VarUnclassified` if discovery
+        // had run: the failure must win.
+        (
+            "malformed reference, no environment, --var token",
+            &malformed_secret,
+            None,
+            &token,
+            TransportLock::DiscoveryFailed,
+        ),
+        (
+            "unknown environment",
+            &plain,
+            Some("n2b-absent"),
+            &none,
+            TransportLock::DiscoveryFailed,
+        ),
+        (
+            "unknown environment, --var token",
+            &secret,
+            Some("n2b-absent"),
+            &token,
+            TransportLock::DiscoveryFailed,
+        ),
+        (
+            "plain, no environment",
+            &plain,
+            None,
+            &none,
+            TransportLock::Open,
+        ),
+        (
+            "--var token, no environment",
+            &secret,
+            None,
+            &token,
+            TransportLock::VarUnclassified,
+        ),
+        (
+            "secret reference, environment selected",
+            &secret,
+            Some("local"),
+            &none,
+            TransportLock::SecretReferenced,
+        ),
+        (
+            "plain, environment selected",
+            &plain,
+            Some("local"),
+            &token,
+            TransportLock::Open,
+        ),
+    ];
+    for (what, request, selected, supplied, expected) in cases {
+        let lock = transport_lock(request, &environments, selected, supplied);
+        assert_eq!(lock, expected, "{what}");
+        assert_eq!(
+            lock.is_locked(),
+            expected != TransportLock::Open,
+            "{what}: is_locked"
+        );
+    }
+    assert!(TransportLock::DiscoveryFailed.is_locked());
+    assert!(!TransportLock::Open.is_locked());
 }
 
 #[test]
