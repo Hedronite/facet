@@ -24,8 +24,8 @@ use crate::{
     CommandOutput, FacetError, args,
     expect::{EXPECT_FAIL_TAG, Expectation},
     run::{
-        add_auth_token, execute, execute_locked, hydrate, lookup_request, parse_vars, policy_for,
-        render, resolve_selected, var_names, with_secrets,
+        add_auth_token, case_warnings, execute, execute_locked, hydrate, lookup_request,
+        parse_vars, policy_for, render, resolve_selected, var_names, with_secrets,
     },
     workspace::{WorkspaceInput, load, open_store, overrides_from_parsed},
 };
@@ -136,6 +136,7 @@ fn replay_unredacted(
         &loaded,
         &variables,
     )?;
+    warnings.extend(case_warnings(&hydration));
     let mut merged_variables = hydration.merged(&variables);
     add_auth_token(raw, &mut hydration, &mut merged_variables);
     *redactor = Redactor::new(hydration.redact.iter().cloned());

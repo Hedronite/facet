@@ -39,6 +39,13 @@ separate version axes and do not move with this release.
   the raw request, so `replay --frozen` matches as before. Response bodies
   are stored as received. Bodies recorded before this change keep what
   they were stored with.
+- A request that references a variable hydrated from a machine-store row
+  stored with `--secret` is now treated as secret even when the collection
+  YAML does not declare that variable secret. With an environment
+  selected, it is sent with the locked transport (no redirects, no
+  `HTTP_PROXY` / `HTTPS_PROXY`), and a store row that would move its host
+  fails with `host_override_refused` before anything is sent. Earlier, such
+  a request was sent unlocked and the host-override check skipped it.
 
 ### Fixed
 

@@ -114,7 +114,10 @@ fn run_unredacted(
         strict_variables,
     )?;
     if dry_run {
-        return Ok(dry_run_output(&request, &hydration, environment.is_some()));
+        let preview = dry_run_output(&request, &hydration, environment.is_some());
+        return Ok(case_warnings(&hydration)
+            .into_iter()
+            .fold(preview, CommandOutput::warn));
     }
     let execution = if hydration.references_secret {
         execute_locked(&request, input.base_directory(), output.as_deref())?
@@ -171,7 +174,10 @@ fn run_unredacted(
         output.as_deref(),
         lattice_json,
         lattice_human,
-        recording.warning().into_iter().collect(),
+        case_warnings(&hydration)
+            .into_iter()
+            .chain(recording.warning())
+            .collect(),
         redactor,
     )?;
     Ok(match miss {
@@ -311,6 +317,22 @@ pub(crate) fn add_auth_token(
         hydration.hydrated.push("githubToken".to_owned());
         hydration.source = Some("gh");
     }
+}
+
+/// One warning per referenced name that is only a case away from a
+/// declared secret (`{{Token}}` against `token`): that reference is not the
+/// secret, so it is neither hydrated nor treated as one. Names only.
+pub(crate) fn case_warnings(hydration: &Hydration) -> Vec<String> {
+    hydration
+        .secret_case_collisions
+        .iter()
+        .map(|(referenced, secret)| {
+            format!(
+                "{{{{{referenced}}}}} differs only by case from the declared secret \
+                 {secret}; it is not treated as that secret"
+            )
+        })
+        .collect()
 }
 
 /// Adds `lattice.secrets` (names only) whenever an environment was selected,
