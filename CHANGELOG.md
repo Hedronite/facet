@@ -4,6 +4,21 @@ Notable changes to the Facet CLI. The version is `[workspace.package].version`
 and the git tag `vX.Y.Z`. `facet-lattice` and the vendored `probe-*` crates are
 separate version axes and do not move with this release.
 
+## [Unreleased]
+
+### Fixed
+
+- A request that carries no secret uses the normal transport again. A CLI
+  request run without `--environment` follows redirects and connects through
+  `HTTP_PROXY` / `HTTPS_PROXY` when it references no variable supplied by
+  `--var`. A TUI send with no active environment does the same, and TUI
+  sends that reference a secret stay locked. This removes the 0.7.1 known
+  issue. The locked transport (no redirects, no env proxy) still applies
+  when the selected environment declares a referenced variable secret, from
+  any source; when no environment is selected and the request references a
+  `--var`; and when secret discovery fails. `facet`, `probe` and the TUI
+  decide this with one shared rule.
+
 ## [0.7.0] - 2026-10-25
 
 Changes since v0.6.0 (`7547ebe`, 2026-09-29).
