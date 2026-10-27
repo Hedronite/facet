@@ -166,6 +166,11 @@ facet:
   prints, with `lattice.recorded: false`.
 - No flag overrides it: `--no-record`, `FACET_NO_RECORD=1` and MCP
   `noRecord` can turn recording off, never on.
+- When Facet cannot tie the selector to one request in the source, it
+  records nothing: an empty or unresolved bundled selector, or one that
+  names something other than a request, and an unbundled selector that
+  leaves the collection (`..`, an absolute path, a symlink escape). The
+  request is still sent.
 - Inside `facet:`, an unknown key, a wrong type or an unknown value fails
   with `facet_key_invalid` (exit 3) before anything is sent.
   `error.details.path` names the key path (`facet`, `facet.<name>` or

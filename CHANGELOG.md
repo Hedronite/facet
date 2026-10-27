@@ -46,6 +46,12 @@ separate version axes and do not move with this release.
   `HTTP_PROXY` / `HTTPS_PROXY`), and a store row that would move its host
   fails with `host_override_refused` before anything is sent. Earlier, such
   a request was sent unlocked and the host-override check skipped it.
+- The `facet:` recording rule fails closed. In a bundled collection, an
+  empty selector, one that does not resolve, or one that resolves to
+  something other than a request records nothing. In an unbundled
+  collection, so does a selector that leaves the collection (`..`, an
+  absolute path, a symlink escape). The request is still sent; no run row
+  or blob is written.
 - The `githubToken` that `request run` and `replay` take from `gh` is sent
   only to `https://api.github.com`, port 443 or none, with no userinfo. Any
   other URL fails with `github_token_host_refused` (exit 5) before `gh` runs
