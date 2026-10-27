@@ -14,7 +14,8 @@ use lattice::{
     WorkspaceStore,
 };
 use probe_core::{
-    FolderKey, Header, HttpRequest, QueryParameter, RequestKey, RequestUpdate, resolve_request,
+    FolderKey, Header, HttpRequest, QueryParameter, RequestKey, RequestUpdate, TransportLock,
+    resolve_request, transport_lock,
 };
 use probe_http::{ExecutionOptions, HttpResponse};
 use probe_opencollection::{LoadedWorkspace, SaveError, load_workspace};
@@ -3013,20 +3014,42 @@ impl App {
         }
     }
 
-    /// The request to send plus the secret values hydrated into it, which the
-    /// recorder scrubs from stored text.
-    fn prepared_request_with_redact(&self) -> Result<(HttpRequest, Vec<String>, bool), String> {
+    /// The transport lock for `request` under the active environment, from
+    /// probe-core's shared predicate and variable names only. The TUI has no
+    /// `--var`, and store rows are keyed by environment, so nothing counts as
+    /// supplied without a selection.
+    fn send_lock(&self, request: &HttpRequest) -> TransportLock {
+        let environments = self
+            .loaded
+            .as_ref()
+            .map_or(&[][..], |loaded| loaded.workspace().environments());
+        transport_lock(
+            request,
+            environments,
+            self.active_environment_name(),
+            |_| false,
+        )
+    }
+
+    /// The request to send, the secret values hydrated into it (which the
+    /// recorder scrubs from stored text), and its transport lock.
+    fn prepared_request_with_redact(
+        &self,
+    ) -> Result<(HttpRequest, Vec<String>, TransportLock), String> {
         let Some((_, request)) = self.selected_request() else {
             return Err("no request selected".to_string());
         };
         let mut prepared = request.clone();
         build_update(&self.method, &self.editor).apply(&mut prepared);
+        let lock = self.send_lock(&prepared);
         if let Some(index) = self.active_environment {
+            // A selection that no longer names a loaded environment cannot
+            // be classified, so it keeps locked transport.
             let Some(entry) = self.environments.get(index) else {
-                return Ok((prepared, Vec::new(), true));
+                return Ok((prepared, Vec::new(), TransportLock::DiscoveryFailed));
             };
             let Some(loaded) = self.loaded.as_ref() else {
-                return Ok((prepared, Vec::new(), true));
+                return Ok((prepared, Vec::new(), TransportLock::DiscoveryFailed));
             };
             // Secret hydration (Goal 5): Lattice environment values overlay
             // as overrides before resolve, same path as the CLI.
@@ -3045,17 +3068,19 @@ impl App {
                 &hydration.overrides,
             )
             .map_err(|error| error.to_string())?;
+            // Hydration decides with the same predicate and inputs.
+            debug_assert_eq!(hydration.lock, lock);
             prepared = resolve_request(&prepared, &resolved).map_err(|error| error.to_string())?;
-            return Ok((prepared, hydration.redact, hydration.references_secret));
+            return Ok((prepared, hydration.redact, lock));
         }
-        Ok((prepared, Vec::new(), true))
+        Ok((prepared, Vec::new(), lock))
     }
 
     async fn run_selected(&mut self) -> Result<(), TuiError> {
         if self.pending.is_some() {
             return Ok(());
         }
-        let (request, redact, lock_transport) = match self.prepared_request_with_redact() {
+        let (request, redact, lock) = match self.prepared_request_with_redact() {
             Ok(prepared) => prepared,
             Err(message) => {
                 self.status = RunStatus::Failed(message);
@@ -3104,7 +3129,7 @@ impl App {
                             }
                         }
                     };
-                    if lock_transport {
+                    if lock.is_locked() {
                         engine
                             .execute_cancellable_locked(&request, &options, cancel)
                             .await
@@ -5180,5 +5205,72 @@ mod tests {
             .await
             .unwrap();
         assert!(redraw);
+    }
+    /// Selects the request named `name` and syncs the editor, as a tree
+    /// click does.
+    fn select_request_named(app: &mut App, name: &str) {
+        for _ in 0..app.rows().len() {
+            let found = app
+                .selected_request()
+                .and_then(|(_, request)| request.metadata.name.as_deref())
+                == Some(name);
+            if found {
+                app.refresh_editor_from_selection();
+                return;
+            }
+            app.tree.move_selection(1);
+        }
+        panic!("no request named {name}");
+    }
+
+    #[tokio::test]
+    async fn send_lock_is_open_for_plain_send_without_environment() {
+        let app = App::load(Some(&fixture())).await;
+        assert_eq!(app.active_environment(), None);
+        let (_, redact, lock) = app.prepared_request_with_redact().expect("prepared");
+        assert_eq!(lock, TransportLock::Open);
+        assert!(!lock.is_locked());
+        assert!(redact.is_empty());
+    }
+
+    #[tokio::test]
+    async fn send_lock_keeps_secret_send_locked() {
+        let dir = std::env::temp_dir().join(format!(
+            "facet-tui-lock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let yaml = dir.join("collection.yml");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/opencollection/phase4-environments.yml"),
+            &yaml,
+        )
+        .unwrap();
+        let mut app = App::load(Some(&yaml)).await;
+        select_request_named(&mut app, "Secret variable");
+
+        // With no environment the reference is unclassified but unsupplied.
+        let request = app.selected_request().map(|(_, r)| r.clone()).unwrap();
+        assert_eq!(app.send_lock(&request), TransportLock::Open);
+
+        app.command = "env development".to_string();
+        app.execute_command().await.unwrap();
+        assert_eq!(app.active_environment_name(), Some("development"));
+        assert_eq!(app.send_lock(&request), TransportLock::SecretReferenced);
+        // No stored value: the send stops before transport, naming the
+        // variable only.
+        let error = app.prepared_request_with_redact().expect_err("unavailable");
+        assert!(error.contains("secretToken"), "{error}");
+
+        // A selection that no longer names an environment stays locked.
+        app.active_environment = Some(app.environments().len());
+        let (_, _, lock) = app.prepared_request_with_redact().expect("prepared");
+        assert_eq!(lock, TransportLock::DiscoveryFailed);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
