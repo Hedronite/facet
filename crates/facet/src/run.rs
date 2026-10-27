@@ -10,8 +10,8 @@ use std::{
 };
 
 use facet_record::{
-    Hydration, RecordRequest, Recording, Redactor, actor_from_env, overlay_secrets, record,
-    recording_disabled, request_preview_json, session_from_env,
+    Hydration, RecordPolicy, RecordRequest, Recording, Redactor, actor_from_env, overlay_secrets,
+    record, record_policy, recording_disabled, request_preview_json, session_from_env,
 };
 use lattice::now_ms;
 use probe_core::{
@@ -95,6 +95,7 @@ fn run_unredacted(
     let loaded = load(&input, stdin)?;
     let base = input.base_directory();
     let raw = lookup_request(&loaded, selector)?;
+    let policy = policy_for(&input, selector)?;
     let mut hydration = hydrate(
         base.as_deref(),
         environment.as_deref(),
@@ -152,6 +153,7 @@ fn run_unredacted(
             replayed_from: None,
             var_names: &var_names(&variables),
             redact: &hydration.redact,
+            policy,
         })
     } else {
         Recording::Skipped("disabled")
@@ -281,6 +283,19 @@ pub(crate) fn hydrate(
         variables,
     )
     .map_err(FacetError::hydrate)
+}
+
+/// The collection's `facet:` recording policy for `selector`, read from
+/// the source before anything is sent. A stdin workspace has none.
+pub(crate) fn policy_for(
+    input: &WorkspaceInput,
+    selector: &str,
+) -> Result<RecordPolicy, FacetError> {
+    let source = match input {
+        WorkspaceInput::Path(path) => Some(path.as_path()),
+        WorkspaceInput::Stdin => None,
+    };
+    record_policy(source, selector).map_err(|error| FacetError::policy(&error))
 }
 
 /// The `githubToken` the request's Authorization header references, from

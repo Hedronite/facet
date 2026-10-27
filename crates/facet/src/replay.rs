@@ -24,8 +24,8 @@ use crate::{
     CommandOutput, FacetError, args,
     expect::{EXPECT_FAIL_TAG, Expectation},
     run::{
-        add_auth_token, execute, execute_locked, hydrate, lookup_request, parse_vars, render,
-        resolve_selected, var_names, with_secrets,
+        add_auth_token, execute, execute_locked, hydrate, lookup_request, parse_vars, policy_for,
+        render, resolve_selected, var_names, with_secrets,
     },
     workspace::{WorkspaceInput, load, open_store, overrides_from_parsed},
 };
@@ -128,6 +128,7 @@ fn replay_unredacted(
     let loaded = load(&input, stdin)?;
     let raw = lookup_request(&loaded, selector)
         .map_err(|error| error.with_details(json!({ "replayedFrom": row.id })))?;
+    let policy = policy_for(&input, selector)?;
     let mut hydration = hydrate(
         Some(&base),
         environment.as_deref(),
@@ -199,6 +200,7 @@ fn replay_unredacted(
             replayed_from: Some(&row.id),
             var_names: &var_names(&variables),
             redact: &hydration.redact,
+            policy,
         })
     } else {
         Recording::Skipped("disabled")

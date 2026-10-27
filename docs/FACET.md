@@ -135,6 +135,39 @@ Environment: `FACET_ACTOR` names the actor (default `human`);
 `FACET_SESSION` is written onto the run row. `facet session start` mints the
 parent; recording mint-if-missing if the env is set and the row is absent.
 
+### The `facet:` key
+
+A collection can turn recording off for itself or for one request with a
+Facet-owned `facet:` mapping. Probe and other OpenCollection tools ignore
+it; Facet reads it from the collection or request source.
+
+```yaml
+# Collection level (opencollection.yml, or the top of a bundled file):
+# nothing in this collection is recorded.
+facet:
+  record: never
+```
+
+```yaml
+# Item level (in the request): this request is not recorded.
+facet:
+  record: false
+```
+
+- `record: never` (collection) or `record: false` (item) writes no run row
+  and no blob for `request run`, `replay`, the TUI and MCP, in every layout
+  the loader accepts. The request is still sent and its output still
+  prints, with `lattice.recorded: false`.
+- No flag overrides it: `--no-record`, `FACET_NO_RECORD=1` and MCP
+  `noRecord` can turn recording off, never on.
+- Inside `facet:`, an unknown key, a wrong type or an unknown value fails
+  with `facet_key_invalid` (exit 3) before anything is sent.
+  `error.details.path` names the key path (`facet`, `facet.<name>` or
+  `facet.record`); the error never echoes the value.
+- Outside `facet:`, unknown YAML is accepted and kept as before. A command
+  that rewrites the YAML (`request set`, structure edits) keeps the
+  `facet:` key.
+
 ### Shipped 2026-09-07 (*and more*)
 
 The week-1 loop is closed on `main` (`5087ba7`, PRs #8–#13): send → see →
@@ -829,7 +862,8 @@ Facet extends the upstream table; it never renumbers it.
 | 1 | Assertion failed (`expect_failed`, `replay_changed`; `diff` found differences) |
 | 9 | Lattice store failure (`lattice_error`, `lattice_not_found`) |
 
-Additional stable categories: `blob_not_found`, `run_not_found`,
+Additional stable categories: `facet_key_invalid` (exit 3, a bad
+[`facet:` key](#the-facet-key)); `blob_not_found`, `run_not_found`,
 `session_not_found`, and `pin_not_found` (exit 4, "not found"); `session_not_set` and
 `secret_backend_unavailable` (exit 5, configuration); `invalid_sql` and
 `sql_read_only` (exit 2). Every JSON document carries `schemaVersion: 1`;
