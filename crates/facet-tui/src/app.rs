@@ -3080,6 +3080,23 @@ impl App {
         if self.pending.is_some() {
             return Ok(());
         }
+        // Facts for Lattice, captured before the task takes the request.
+        let root = self.base_directory();
+        let selector = self
+            .tree
+            .selected_request_key()
+            .and_then(|key| self.loaded.as_ref()?.request_selector(key))
+            .map(str::to_string);
+        // The `facet:` key is read back from the source before anything is
+        // sent. An invalid key stops the send and names the key path only.
+        let policy =
+            match facet_record::record_policy(root.as_deref(), selector.as_deref().unwrap_or("")) {
+                Ok(policy) => policy,
+                Err(error) => {
+                    self.status = RunStatus::Failed(format!("{}: {error}", error.category()));
+                    return Ok(());
+                }
+            };
         let (request, redact, lock) = match self.prepared_request_with_redact() {
             Ok(prepared) => prepared,
             Err(message) => {
@@ -3091,13 +3108,6 @@ impl App {
             base_directory: self.base_directory(),
             response_cache: None,
         };
-        // Facts for Lattice, captured before the task takes the request.
-        let root = self.base_directory();
-        let selector = self
-            .tree
-            .selected_request_key()
-            .and_then(|key| self.loaded.as_ref()?.request_selector(key))
-            .map(str::to_string);
         let environment = self.active_environment_name().map(str::to_string);
         let should_record = root.is_some() && !facet_record::recording_disabled();
         let actor = facet_record::actor_from_env();
@@ -3160,6 +3170,7 @@ impl App {
                     replayed_from: None,
                     var_names: &[],
                     redact: &redact,
+                    policy,
                 });
                 Some(RecordSummary::from_recording(&recording))
             } else {
@@ -5271,6 +5282,107 @@ mod tests {
         app.active_environment = Some(app.environments().len());
         let (_, _, lock) = app.prepared_request_with_redact().expect("prepared");
         assert_eq!(lock, TransportLock::DiscoveryFailed);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    /// A bundled collection in a temp dir, with a store beside it so an
+    /// allowed run would record, and one request to `url` carrying
+    /// `item_facet` as its item-level YAML.
+    async fn app_with_policy(tag: &str, url: &str, item_facet: &str) -> (PathBuf, App) {
+        let dir = std::env::temp_dir().join(format!(
+            "facet-tui-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let yaml = dir.join("collection.yml");
+        std::fs::write(
+            &yaml,
+            format!(
+                "opencollection: 1.0.0\n\
+                 info:\n  name: Policy\n\
+                 bundled: true\n\
+                 items:\n\
+                 \x20 - info:\n      name: Ping\n      type: http\n      seq: 1\n\
+                 \x20   {item_facet}\n\
+                 \x20   http:\n      method: GET\n      url: {url}\n"
+            ),
+        )
+        .unwrap();
+        drop(WorkspaceStore::open(&dir, LatticeConfig::default()).unwrap());
+        let app = App::load(Some(&yaml)).await;
+        assert!(app.selected_request().is_some(), "collection loads");
+        (dir, app)
+    }
+
+    fn stored_runs(dir: &Path) -> usize {
+        WorkspaceStore::open(dir, LatticeConfig::default())
+            .unwrap()
+            .history(&HistoryQuery::default())
+            .unwrap()
+            .len()
+    }
+
+    #[tokio::test]
+    async fn forbidden_request_is_sent_but_writes_no_row() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/ping", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok")
+                .unwrap();
+        });
+        let (dir, mut app) =
+            app_with_policy("policy-forbid", &url, "facet: { record: false }").await;
+
+        app.run_selected().await.unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.is_in_flight() {
+            assert!(Instant::now() < deadline, "send did not finish");
+            app.poll_pending();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        server.join().expect("the request reached the server");
+
+        assert!(
+            matches!(app.status, RunStatus::Done { status: 200, .. }),
+            "{:?}",
+            app.status
+        );
+        let summary = app.last_recording().expect("record was consulted");
+        assert_eq!(summary.note, "facet_policy");
+        assert_eq!(summary.run_id, None);
+        assert_eq!(stored_runs(&dir), 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn invalid_facet_key_stops_the_send() {
+        // Nothing listens here; the send must never be attempted.
+        let (dir, mut app) = app_with_policy(
+            "policy-invalid",
+            "http://127.0.0.1:9/never",
+            "facet: { record: sk-live-canary }",
+        )
+        .await;
+
+        app.run_selected().await.unwrap();
+
+        assert!(!app.is_in_flight(), "nothing was sent");
+        let RunStatus::Failed(message) = &app.status else {
+            panic!("expected a failed status, got {:?}", app.status);
+        };
+        assert!(message.starts_with("facet_key_invalid"), "{message}");
+        assert!(message.contains("facet.record"), "{message}");
+        assert!(!message.contains("sk-live-canary"), "{message}");
+        assert!(app.last_recording().is_none());
+        assert_eq!(stored_runs(&dir), 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
