@@ -3068,8 +3068,7 @@ impl App {
                 &hydration.overrides,
             )
             .map_err(|error| error.to_string())?;
-            // Hydration decides with the same predicate and inputs.
-            debug_assert_eq!(hydration.lock, lock);
+            let lock = hydrated_lock(lock, hydration.lock);
             prepared = resolve_request(&prepared, &resolved).map_err(|error| error.to_string())?;
             return Ok((prepared, hydration.redact, lock));
         }
@@ -3556,6 +3555,18 @@ impl App {
             .filter_map(|folder_key| self.folder_name(*folder_key))
             .collect::<Vec<_>>()
             .join(" › ")
+    }
+}
+
+/// The lock a send uses once hydration ran: hydration's, which can only
+/// raise the predicate's (a store row marked secret locks a variable the
+/// YAML declares plain). Were it ever lower, the predicate's lock stands,
+/// so a send is never less strict than the declarations say.
+fn hydrated_lock(predicate: TransportLock, hydration: TransportLock) -> TransportLock {
+    if predicate.is_locked() && !hydration.is_locked() {
+        predicate
+    } else {
+        hydration
     }
 }
 
@@ -5217,6 +5228,7 @@ mod tests {
             .unwrap();
         assert!(redraw);
     }
+
     /// Selects the request named `name` and syncs the editor, as a tree
     /// click does.
     fn select_request_named(app: &mut App, name: &str) {
@@ -5284,6 +5296,7 @@ mod tests {
         assert_eq!(lock, TransportLock::DiscoveryFailed);
         std::fs::remove_dir_all(&dir).ok();
     }
+
     /// A bundled collection in a temp dir, with a store beside it so an
     /// allowed run would record, and one request to `url` carrying
     /// `item_facet` as its item-level YAML.
@@ -5384,5 +5397,41 @@ mod tests {
         assert!(app.last_recording().is_none());
         assert_eq!(stored_runs(&dir), 0);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// FN-1: with an environment selected, a variable the YAML declares
+    /// plain passes the predicate as Open, and a store row marked secret
+    /// raises hydration's lock. The send takes the raised lock in every
+    /// build profile, debug or release.
+    #[tokio::test]
+    async fn store_secret_row_locks_a_yaml_plain_variable() {
+        let mut app = App::load(Some(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/opencollection/phase4-environments.yml"),
+        ))
+        .await;
+        select_request_named(&mut app, "Resolved users");
+        app.command = "env development".to_string();
+        app.execute_command().await.unwrap();
+        assert_eq!(app.active_environment_name(), Some("development"));
+        let request = app.selected_request().map(|(_, r)| r.clone()).unwrap();
+        // `token` is declared plain, so the declaration-based predicate is
+        // Open on its own.
+        let predicate = app.send_lock(&request);
+        assert_eq!(predicate, TransportLock::Open);
+
+        let lock = hydrated_lock(predicate, TransportLock::SecretReferenced);
+        assert_eq!(lock, TransportLock::SecretReferenced);
+        assert!(lock.is_locked());
+        // Hydration that locks nothing leaves a plain send open, and can
+        // never open a send the predicate locked.
+        assert_eq!(
+            hydrated_lock(TransportLock::Open, TransportLock::Open),
+            TransportLock::Open
+        );
+        assert_eq!(
+            hydrated_lock(TransportLock::SecretReferenced, TransportLock::Open),
+            TransportLock::SecretReferenced
+        );
     }
 }
