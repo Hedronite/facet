@@ -11,7 +11,7 @@
 //! request and a `--frozen` replay both match it.
 //!
 //! A store row stored with `--secret` is a known secret even when the YAML
-//! declares its variable plain (Vini #54): its value is scrubbed from the
+//! declares its variable plain (SecOps review #54): its value is scrubbed from the
 //! stored body the same way. The control is the same request over a plain
 //! store row, whose stored body keeps the value.
 //!
