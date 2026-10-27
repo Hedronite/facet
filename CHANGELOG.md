@@ -33,6 +33,12 @@ separate version axes and do not move with this release.
   and `blob_get` return store data as stored.
 - `replay` now sends the `githubToken` it resolves from `gh`, as `request
   run` does, and redacts it.
+- Request bodies are scrubbed of known secret values at write, inline or
+  as a blob, exactly and in their URL-encoded forms. The stored request
+  body hash is the hash of the scrubbed bytes; `requestHash` still hashes
+  the raw request, so `replay --frozen` matches as before. Response bodies
+  are stored as received. Bodies recorded before this change keep what
+  they were stored with.
 
 ### Fixed
 

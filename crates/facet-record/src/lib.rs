@@ -220,7 +220,8 @@ pub struct RecordRequest<'a> {
     /// values are never written anywhere in Lattice.
     pub var_names: &'a [String],
     /// Secret values to scrub from stored text (URL, header values, error
-    /// text) before the row is written. See [`Hydration::redact`].
+    /// text) and from the stored request-body bytes before the row is
+    /// written. See [`Hydration::redact`].
     pub redact: &'a [String],
     /// The Facet-owned `facet:` policy of this request, decided before
     /// anything is sent by [`record_policy`]. When it forbids recording,
@@ -318,7 +319,15 @@ pub fn record(req: &RecordRequest<'_>) -> Recording {
         }
         Err(_) => BodyInput::None,
     };
-    let req_body = req_body_bytes
+    // The stored blob passes through the run redactor: request bodies are
+    // scrubbed of known values, exact and URL-encoded, before
+    // `place_hashed`. `ReqBody`'s hash is the hash of the stored, scrubbed
+    // bytes; `request_hash` stays from the raw body so replay matching is
+    // unchanged.
+    let stored_body = req_body_bytes
+        .as_deref()
+        .map(|bytes| redactor.bytes(bytes).into_owned());
+    let req_body = stored_body
         .as_deref()
         .map_or(BodyInput::None, BodyInput::Bytes);
 
@@ -587,8 +596,12 @@ pub const MIN_REDACT_LEN: usize = 4;
 /// Replaces every occurrence of each known secret value, and of its
 /// URL-encoded forms, with `<redacted>`. One half of the shared [`Redactor`]
 /// path the store and the rendered surfaces (preview, stdout, the TUI) run
-/// through, so redaction never differs between them. Bodies are
-/// content-addressed blobs and are not rewritten.
+/// through, so redaction never differs between them.
+///
+/// Request bodies are scrubbed through [`Redactor::bytes`] once at write,
+/// before the blob is placed; a stored request body never keeps a known
+/// value and `req_body_hash` is the hash of those scrubbed bytes.
+/// Response bodies at rest are not scrubbed here.
 #[must_use]
 pub fn scrub(text: &str, secrets: &[String]) -> String {
     Redactor::new(secrets.iter().cloned())
@@ -598,10 +611,16 @@ pub fn scrub(text: &str, secrets: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use probe_core::{Header, HttpRequest};
+    use probe_core::{Body, FormField, Header, HttpRequest, RawBody, RawBodyKind, RequestBody};
+    use probe_http::HttpResponse;
+    use std::time::Duration;
 
     use super::redact::Redactor;
-    use super::{form_encode, request_hash, request_headers_json, scrub, url_encode};
+    use super::{
+        ConfigOverrides, RecordPolicy, RecordRequest, Recording, form_encode, record,
+        request_body_bytes, request_hash, request_headers_json, scrub, url_encode,
+    };
+    use lattice::sha256_hex;
 
     fn request(url: &str) -> HttpRequest {
         HttpRequest {
@@ -689,5 +708,144 @@ mod tests {
             },
         ];
         assert_eq!(form_encode(&fields), "q=x+y");
+    }
+
+    /// One recorded run against a fresh store, like the shipped-binary
+    /// tests: the workspace store lives in `store`.
+    struct Recorded {
+        row: lattice::RunRow,
+        store: tempfile::TempDir,
+    }
+
+    fn run_recorded(request: &HttpRequest, secrets: &[String]) -> Recorded {
+        let store = tempfile::tempdir().unwrap();
+        let outcome = Ok::<HttpResponse, probe_http::HttpError>(HttpResponse {
+            status: 200,
+            reason: "OK".to_owned(),
+            url: "https://api.example.test/call".to_owned(),
+            duration: Duration::ZERO,
+            size: 2,
+            headers: vec![],
+            body: b"{}".to_vec(),
+            body_complete: true,
+            body_file: None,
+            body_retention_error: None,
+        });
+        let empty: Vec<String> = vec![];
+        let tags: Vec<String> = vec![];
+        let actor = "human".to_owned();
+        let recording = record(&RecordRequest {
+            root: Some(store.path()),
+            overrides: &ConfigOverrides::default(),
+            selector: "items/0",
+            environment: None,
+            request,
+            started_at: 0,
+            elapsed_ms: 1,
+            result: &outcome,
+            output: None,
+            tags: &tags,
+            actor: &actor,
+            session: None,
+            replayed_from: None,
+            var_names: &empty,
+            redact: secrets,
+            policy: RecordPolicy::Allowed,
+        });
+        match recording {
+            Recording::Recorded { run, .. } => Recorded { row: run, store },
+            other => panic!("expected a recorded run, got: {}", other.json()),
+        }
+    }
+
+    fn request_body_raw(request: &HttpRequest) -> Vec<u8> {
+        request_body_bytes(request).expect("the body has bytes")
+    }
+
+    #[test]
+    fn raw_body_blob_is_scrubbed_but_request_hash_keeps_the_raw() {
+        let secret = "g4-body-canary-secret".to_owned();
+        let request = HttpRequest {
+            method: Some("POST".to_owned()),
+            url: Some("https://api.example.test/call".to_owned()),
+            body: Some(RequestBody::Single(Body::Raw(RawBody {
+                kind: RawBodyKind::Text,
+                data: format!("password={secret}\npayload=keep\n"),
+            }))),
+            ..HttpRequest::default()
+        };
+        let recorded = run_recorded(&request, std::slice::from_ref(&secret));
+        let raw = request_body_raw(&request);
+        // Replay matching stays on the raw body.
+        assert_eq!(
+            recorded.row.request_hash,
+            request_hash(&request, Some(&raw))
+        );
+        // The stored ref is the hash of the scrubbed bytes.
+        let redactor = Redactor::new(vec![secret.clone()]);
+        let scrubbed = redactor.bytes(&raw).into_owned();
+        assert_ne!(scrubbed, raw, "the known value is replaced");
+        assert_eq!(
+            recorded.row.req_body.hash.as_deref(),
+            Some(sha256_hex(&scrubbed).as_str())
+        );
+        assert_eq!(recorded.row.req_body.len, Some(scrubbed.len() as u64));
+        // The blob file holds exactly the scrubbed bytes, no canary.
+        let blob_path = recorded
+            .store
+            .path()
+            .join(".facet/blobs")
+            .join(recorded.row.req_body.hash.expect("v2 stores hashes"));
+        let blob = std::fs::read(blob_path).unwrap();
+        assert_eq!(blob, scrubbed);
+        let canary = blob
+            .windows(secret.len())
+            .position(|window| window == secret.as_bytes());
+        assert!(canary.is_none(), "canary in the stored blob");
+    }
+
+    #[test]
+    fn form_urlencoded_body_blob_is_scrubbed_of_its_encoded_forms() {
+        let secret = "g4 form body-canary".to_owned();
+        let request = HttpRequest {
+            method: Some("POST".to_owned()),
+            url: Some("https://api.example.test/call".to_owned()),
+            body: Some(RequestBody::Single(Body::FormUrlEncoded(vec![FormField {
+                name: "password".to_owned(),
+                value: secret.clone(),
+                disabled: false,
+            }]))),
+            ..HttpRequest::default()
+        };
+        let recorded = run_recorded(&request, std::slice::from_ref(&secret));
+        let raw = request_body_raw(&request);
+        assert_eq!(
+            raw,
+            b"password=g4+form+body-canary".as_slice(),
+            "form_encode turns spaces into plus"
+        );
+        assert_eq!(
+            recorded.row.request_hash,
+            request_hash(&request, Some(&raw))
+        );
+        // The scrubbed blob: the `+`-encoded form of the secret is matched.
+        let redactor = Redactor::new(vec![secret.clone()]);
+        let scrubbed = redactor.bytes(&raw).into_owned();
+        assert_eq!(
+            scrubbed,
+            b"password=<redacted>".as_slice(),
+            "the `+` encoded form is one of the redactor patterns"
+        );
+        assert_eq!(
+            recorded.row.req_body.hash.as_deref(),
+            Some(sha256_hex(&scrubbed).as_str())
+        );
+        let blob_path = recorded
+            .store
+            .path()
+            .join(".facet/blobs")
+            .join(recorded.row.req_body.hash.expect("v2 stores hashes"));
+        let blob = std::fs::read(blob_path).unwrap();
+        assert_eq!(blob, scrubbed);
     }
 }
