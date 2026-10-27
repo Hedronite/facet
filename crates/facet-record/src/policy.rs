@@ -127,7 +127,8 @@ pub fn record_policy(source: Option<&Path>, selector: &str) -> Result<RecordPoli
         let item_rule = rule_of(&item)?;
         return combine(collection_rule, item_rule);
     }
-    // The source vanished between load and now; nothing to re-read.
+    // The source vanished between load and now: nothing to re-read, and a
+    // rule may have been there, so forbid.
     Ok(RecordPolicy::Forbidden)
 }
 
