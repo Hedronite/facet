@@ -94,9 +94,13 @@ impl RecordPolicy {
 /// workspace) has nothing to re-read, so the policy is
 /// [`RecordPolicy::Allowed`]. The `selector` is the repository locator
 /// `record` stores: a structural `items/…` path for a bundled collection,
-/// the workspace-relative path of the request file otherwise. The request
-/// is still sent when the policy forbids recording; only the row and its
-/// blobs are withheld.
+/// the workspace-relative path of the request file otherwise. Fail closed
+/// when a selector is present but asks nonsense untouched: empty, not
+/// whole `items` index pairs, an index on out of range, a node that is
+/// not a mapping, or an unbundled path that leaves the collection (any
+/// non-plain component, or a symlink that escapes). The request is still
+/// sent when the policy forbids recording; only the row and its blobs
+/// are withheld.
 pub fn record_policy(source: Option<&Path>, selector: &str) -> Result<RecordPolicy, PolicyError> {
     let Some(source) = source else {
         return Ok(RecordPolicy::Allowed);
@@ -119,6 +123,12 @@ pub fn record_policy(source: Option<&Path>, selector: &str) -> Result<RecordPoli
         if is_bundled(&document) {
             return request_policy(&document, selector);
         }
+        // The selector is a workspace-relative request file path: nothing
+        // but plain components, canonically inside the collection, or the
+        // rule it may name is unreadable.
+        if !selector_stays_in_source(source, selector) {
+            return Ok(RecordPolicy::Forbidden);
+        }
         let Some(item) = document_at(&source.join(selector)) else {
             // The request file is gone: its rule is unreadable.
             return Ok(RecordPolicy::Forbidden);
@@ -136,7 +146,18 @@ pub fn record_policy(source: Option<&Path>, selector: &str) -> Result<RecordPoli
 /// the request, then combine that item's rule with the collection's.
 fn request_policy(document: &Value, selector: &str) -> Result<RecordPolicy, PolicyError> {
     let collection_rule = rule_of(document)?;
-    let item_rule = walk_selector(document, selector).map_or(Ok(None), rule_of)?;
+    let Some(item) = walk_selector(document, selector) else {
+        // A selector that names no request cannot read its rule: empty,
+        // not whole key/index pairs, an index out of range, or a walk
+        // whose step leaves a mapping.
+        return Ok(RecordPolicy::Forbidden);
+    };
+    if !item.is_mapping() {
+        // The walk resolved to a scalar or a sequence: that is not the
+        // request item the loader produced.
+        return Ok(RecordPolicy::Forbidden);
+    }
+    let item_rule = rule_of(item)?;
     combine(collection_rule, item_rule)
 }
 
@@ -144,9 +165,16 @@ fn request_policy(document: &Value, selector: &str) -> Result<RecordPolicy, Poli
 /// document, exactly the way the loader numbers its locators. `None` when
 /// the selector does not name a request document the loader produced.
 fn walk_selector<'a>(document: &'a Value, selector: &str) -> Option<&'a Value> {
+    let tokens = selector.split('/').collect::<Vec<_>>();
+    if tokens.len() % 2 != 0 {
+        // A selector is whole key/index pairs; nothing dangling.
+        return None;
+    }
     let mut node = document;
-    let mut tokens = selector.split('/');
-    while let (Some(key), Some(index)) = (tokens.next(), tokens.next()) {
+    for pair in tokens.chunks_exact(2) {
+        let [key, index] = pair else {
+            return None;
+        };
         let sequence = node.get(key)?.as_sequence()?;
         node = sequence.get(index.parse::<usize>().ok()?)?;
     }
@@ -231,6 +259,25 @@ fn collection_file(root: &Path) -> Option<std::path::PathBuf> {
         .into_iter()
         .map(|extension| root.join(format!("opencollection.{extension}")))
         .find(|path| fs::metadata(path).is_ok_and(|meta| meta.is_file()))
+}
+
+/// Whether `selector` can name a request file that stays inside
+/// `source`: every component a plain name, no `..` roots or prefixes,
+/// and no symlink that escapes the collection once canonicalized.
+fn selector_stays_in_source(source: &Path, selector: &str) -> bool {
+    if selector.is_empty()
+        || !Path::new(selector)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return false;
+    }
+    let target = source.join(selector).canonicalize().ok();
+    let root = source.canonicalize().ok();
+    match (target, root) {
+        (Some(target), Some(root)) => target.starts_with(root),
+        _ => false,
+    }
 }
 
 /// Parses a source file that has to exist: `None` fails closed.
@@ -462,6 +509,99 @@ mod tests {
         let (bare, _temp) = unbundled(None, &[("one.yml", one)]);
         assert_eq!(
             expect(record_policy(Some(&bare), "one.yml")),
+            RecordPolicy::Forbidden
+        );
+    }
+
+    #[test]
+    fn bundled_selectors_that_fail_closed() {
+        let source = format!("{BUNDLED_HEADER}{BUNDLED_ITEMS}");
+        let (file, _temp) = bundled(&source);
+        // Empty (the TUI with a root and no selector), odd token counts,
+        // out-of-range, a non-numeric index, and a walk that falls out of
+        // a mapping.
+        for selector in ["", "items", "items/0/items", "items/9", "items/x"] {
+            assert_eq!(
+                expect(record_policy(Some(&file), selector)),
+                RecordPolicy::Forbidden,
+                "{selector:?}"
+            );
+        }
+        // The same refusals through the bundled-in-directory shape.
+        let (dir, _temp) = unbundled(Some(&source), &[]);
+        for selector in ["", "items", "items/9"] {
+            assert_eq!(
+                expect(record_policy(Some(&dir), selector)),
+                RecordPolicy::Forbidden,
+                "{selector:?}"
+            );
+        }
+        // A node that is not a mapping, in either shape.
+        let (file, _temp) =
+            bundled("opencollection: 1.0.0\nbundled: true\nitems:\n  - plain-text-no-mapping\n");
+        assert_eq!(
+            expect(record_policy(Some(&file), "items/0")),
+            RecordPolicy::Forbidden
+        );
+        let (dir, _temp) = unbundled(
+            Some("opencollection: 1.0.0\nbundled: true\nitems:\n  - plain-text-no-mapping\n"),
+            &[],
+        );
+        assert_eq!(
+            expect(record_policy(Some(&dir), "items/0")),
+            RecordPolicy::Forbidden
+        );
+        // Valid selectors keep their results: the first item forbids, the
+        // second one has no rule and stays allowed.
+        let valid = format!("{BUNDLED_HEADER}{BUNDLED_ITEMS}");
+        let (file, _temp) = bundled(&valid);
+        assert_eq!(
+            expect(record_policy(Some(&file), "items/0")),
+            RecordPolicy::Forbidden
+        );
+        assert_eq!(
+            expect(record_policy(Some(&file), "items/1")),
+            RecordPolicy::Allowed
+        );
+    }
+
+    #[test]
+    fn unbundled_selectors_may_not_leave_the_collection() {
+        let collection = "opencollection: 1.0.0\nbundled: false\n";
+        let one = "info:\n  type: http\n  name: One\nfacet:\n  record: false\n";
+        let (dir, _temp) = unbundled(Some(collection), &[("one.yml", one)]);
+        for selector in [
+            "../one.yml",
+            "sub/../../one.yml",
+            "sub/../one.yml",
+            "/one.yml",
+            "",
+        ] {
+            assert_eq!(
+                expect(record_policy(Some(&dir), selector)),
+                RecordPolicy::Forbidden,
+                "{selector:?}"
+            );
+        }
+        // A symlink that escapes the collection, and one that stays in it.
+        let outside = tempfile::tempdir().unwrap();
+        let outside_body = outside.path().join("outside.yml");
+        fs::write(&outside_body, one).unwrap();
+        std::os::unix::fs::symlink(&outside_body, dir.join("escape.yml")).unwrap();
+        std::os::unix::fs::symlink("one.yml", dir.join("alias.yml")).unwrap();
+        assert_eq!(
+            expect(record_policy(Some(&dir), "escape.yml")),
+            RecordPolicy::Forbidden,
+            "a symlinked rule outside the collection cannot be read"
+        );
+        // An internal symlink keeps its rule.
+        assert_eq!(
+            expect(record_policy(Some(&dir), "alias.yml")),
+            RecordPolicy::Forbidden,
+            "points at one.yml, whose rule forbids"
+        );
+        assert_eq!(
+            expect(record_policy(Some(&dir), "one.yml")),
             RecordPolicy::Forbidden
         );
     }

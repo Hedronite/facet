@@ -13,6 +13,7 @@
 //! references; never substitute an empty value or the name; values never
 //! leave the resolved request (only names are reported).
 
+use std::collections::BTreeSet;
 use std::net::IpAddr;
 use std::path::Path;
 
@@ -20,9 +21,9 @@ use lattice::{
     LatticeConfig, LatticeError, MachineStore, SECRET_KEY_ENV, SecretConfig, WorkspaceStore,
 };
 use probe_core::{
-    Environment, EnvironmentResolutionError, HttpRequest, ResolvedEnvironment, TransportLock,
-    apply_path_parameters, discover_request_variables, resolve_environment_with_overrides,
-    transport_lock,
+    Environment, EnvironmentResolutionError, EnvironmentVariable, HttpRequest, RequestVariableInfo,
+    ResolvedEnvironment, TransportLock, apply_path_parameters, discover_request_variables,
+    resolve_environment_with_overrides, transport_lock,
 };
 use serde_json::{Value, json};
 
@@ -47,6 +48,12 @@ pub struct Hydration {
     /// this request must run transport-side. Beside `redact` so the secret
     /// fields retire or retune together. Not part of `lattice.secrets`.
     pub lock: TransportLock,
+    /// Referenced variable names that are only an ASCII case away from a
+    /// declared secret in the selected environment, with the name of that
+    /// secret: a reference such as `{{Token}}` never hits the secret
+    /// `token`, so `run` and `replay` warn. Names only, never values. Not
+    /// part of `lattice.secrets`.
+    pub secret_case_collisions: Vec<(String, String)>,
     /// The request references a declared secret, including one satisfied
     /// by `--var`, or secret discovery could not run. Not part of
     /// `lattice.secrets`; while run, replay and the TUI still read this
@@ -147,24 +154,31 @@ pub fn overlay_secrets(
         user_overrides.iter().any(|(var, _)| var == name)
     });
     let Some(environment) = environment else {
-        return Ok(idle(Vec::new(), lock));
+        return Ok(idle(Vec::new(), lock, Vec::new()));
     };
     let Some(root) = root else {
         let Ok(referenced) = discover_request_variables(request, environments, Some(environment))
         else {
-            return Ok(idle(Vec::new(), lock));
+            return Ok(idle(Vec::new(), lock, Vec::new()));
         };
-        return Ok(idle(secret_var_redact(&referenced, user_overrides), lock));
+        let secret_case_collisions = case_collisions(&referenced, environments, environment);
+        return Ok(idle(
+            secret_var_redact(&referenced, user_overrides),
+            lock,
+            secret_case_collisions,
+        ));
     };
     // Discovery errors (unknown environment, bad inheritance) are core's to
     // report at resolve time with the right category. Lock transport anyway.
     let Ok(referenced) = discover_request_variables(request, environments, Some(environment))
     else {
-        return Ok(idle(Vec::new(), lock));
+        return Ok(idle(Vec::new(), lock, Vec::new()));
     };
     // Includes secrets satisfied by `--var`. Those still make this a
-    // secret-referencing request, so a store host must not apply.
-    let any_secret = referenced.iter().any(|info| info.secret);
+    // secret-referencing request, so a store host must not apply. Store
+    // rows marked secret are counted as they hydrate below.
+    let mut any_secret = referenced.iter().any(|info| info.secret);
+    let secret_case_collisions = case_collisions(&referenced, environments, environment);
     // A user `--var` for a declared secret is still a secret: remember its
     // value for redaction even though Lattice is not consulted for it.
     let mut redact: Vec<String> = referenced
@@ -182,13 +196,13 @@ pub fn overlay_secrets(
         .filter(|info| !user_overrides.iter().any(|(name, _)| *name == info.name))
         .collect();
     if referenced.is_empty() {
-        return Ok(idle(redact, lock));
+        return Ok(idle(redact, lock, secret_case_collisions.clone()));
     }
     let strict = referenced.iter().any(|info| info.secret);
 
     // A store beside the collection is the only way to have Lattice values.
     let Some(workspace_root) = WorkspaceStore::discover(root) else {
-        return Ok(idle(redact, lock));
+        return Ok(idle(redact, lock, secret_case_collisions.clone()));
     };
     let opened = LatticeConfig::load(&workspace_root)
         .map_err(LatticeError::from)
@@ -196,25 +210,25 @@ pub fn overlay_secrets(
     let store = match opened {
         Ok(Some(store)) => store,
         Ok(None) => {
-            return Ok(idle(redact, lock));
+            return Ok(idle(redact, lock, secret_case_collisions.clone()));
         }
         Err(error) if strict => return Err(HydrateError::Lattice(error)),
         Err(_) => {
-            return Ok(idle(redact, lock));
+            return Ok(idle(redact, lock, secret_case_collisions.clone()));
         }
     };
     let machine = match MachineStore::open(store.config()) {
         Ok(machine) => machine,
         Err(error) if strict => return Err(HydrateError::Lattice(error)),
         Err(_) => {
-            return Ok(idle(redact, lock));
+            return Ok(idle(redact, lock, secret_case_collisions.clone()));
         }
     };
     let rows = match machine.environments(store.workspace_id()) {
         Ok(rows) => rows,
         Err(error) if strict => return Err(HydrateError::Lattice(error)),
         Err(_) => {
-            return Ok(idle(redact, lock));
+            return Ok(idle(redact, lock, secret_case_collisions.clone()));
         }
     };
 
@@ -226,6 +240,7 @@ pub fn overlay_secrets(
     let plain_config = SecretConfig::keyring();
 
     let mut hydration = Hydration::default();
+    let mut store_row_secret = false;
     for info in referenced {
         let Some(row) = rows
             .iter()
@@ -249,6 +264,13 @@ pub fn overlay_secrets(
         };
         match machine.environment_with(store.workspace_id(), environment, &info.name, config) {
             Ok(Some(value)) if !value.is_empty() => {
+                if row.secret {
+                    // A store row marked secret is a secret even when the
+                    // YAML does not declare it: count it for the lock and
+                    // the host-override check.
+                    store_row_secret = true;
+                    any_secret = true;
+                }
                 if row.secret || info.secret {
                     hydration.secrets += usize::from(row.secret);
                     redact.push(value.clone());
@@ -272,6 +294,14 @@ pub fn overlay_secrets(
     hydration.redact = redact;
     hydration.lock = lock;
     hydration.references_secret = lock.is_locked();
+    if store_row_secret {
+        // Hydration only raises the lock: the predicate stays
+        // declaration-based, and a store secret decides like one with an
+        // environment selected.
+        hydration.lock = raise_to_secret(hydration.lock);
+        hydration.references_secret = hydration.lock.is_locked();
+    }
+    hydration.secret_case_collisions = secret_case_collisions;
     hydration.source = if hydration.secrets > 0 {
         Some(backend_label)
     } else if hydration.hydrated.is_empty() {
@@ -293,13 +323,90 @@ pub fn overlay_secrets(
     Ok(hydration)
 }
 
-fn idle(redact: Vec<String>, lock: TransportLock) -> Hydration {
+fn idle(
+    redact: Vec<String>,
+    lock: TransportLock,
+    secret_case_collisions: Vec<(String, String)>,
+) -> Hydration {
     Hydration {
         redact,
         lock,
+        secret_case_collisions,
         references_secret: lock.is_locked(),
         ..Hydration::default()
     }
+}
+/// A store secret decides like a declared secret with an environment
+/// selected: the lock may only rise, and the existing branch keeps its
+/// cause.
+fn raise_to_secret(lock: TransportLock) -> TransportLock {
+    match lock {
+        TransportLock::Open => TransportLock::SecretReferenced,
+        otherwise => otherwise,
+    }
+}
+
+/// Referenced names that are only an ASCII case away from a declared
+/// secret: this reference never hits that secret, so both names are
+/// warned about. Names only; never a value.
+fn case_collisions(
+    referenced: &[RequestVariableInfo],
+    environments: &[Environment],
+    selected: &str,
+) -> Vec<(String, String)> {
+    let secrets = declared_secret_names(environments, selected);
+    let mut collisions = Vec::new();
+    for info in referenced {
+        if let Some(secret) = secrets
+            .iter()
+            .find(|secret| secret.eq_ignore_ascii_case(&info.name) && **secret != info.name)
+        {
+            collisions.push((info.name.clone(), secret.clone()));
+        }
+    }
+    collisions
+}
+
+/// Declared secret names of the selected environment, spanning its
+/// inheritance chain exactly like the core declaration resolver: the
+/// innermost declaration wins, and a disabled declaration shadows its
+/// name without being a secret.
+fn declared_secret_names(environments: &[Environment], selected: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut next = Some(selected.to_owned());
+    while let Some(name) = next {
+        if !seen.insert(name.clone()) {
+            break;
+        }
+        let Some(environment) = environments
+            .iter()
+            .find(|environment| environment.name == name)
+        else {
+            // Discovery refused an unknown ancestor already.
+            break;
+        };
+        chain.push(environment);
+        next = environment.extends.clone();
+    }
+    let mut declarations = std::collections::BTreeMap::<String, bool>::new();
+    for environment in chain.into_iter().rev() {
+        for variable in &environment.variables {
+            let (name, secret) = match variable {
+                EnvironmentVariable::Plain(variable) => (variable.name.as_ref(), false),
+                EnvironmentVariable::Secret(variable) => {
+                    (variable.name.as_ref(), !variable.disabled)
+                }
+            };
+            if let Some(name) = name {
+                declarations.insert(name.clone(), secret);
+            }
+        }
+    }
+    declarations
+        .into_iter()
+        .filter_map(|(name, secret)| secret.then_some(name))
+        .collect()
 }
 
 /// Store variable whose resolved URL changes the pinned authority, if any.
@@ -500,6 +607,8 @@ fn secret_var_redact(
 #[cfg(test)]
 mod tests {
     use super::Hydration;
+    use super::{TransportLock, case_collisions, declared_secret_names, raise_to_secret};
+    use probe_core::{Environment, HttpRequest, SecretVariable};
 
     #[test]
     fn user_overrides_come_last_and_human_counts() {
@@ -510,6 +619,7 @@ mod tests {
             source: Some("encrypted"),
             redact: vec!["abc".to_owned()],
             lock: probe_core::TransportLock::Open,
+            secret_case_collisions: vec![],
             references_secret: false,
         };
         let merged = hydration.merged(&[("token".to_owned(), "user".to_owned())]);
@@ -522,5 +632,102 @@ mod tests {
         assert_eq!(hydration.json()["hydrated"][0], "token");
         assert!(hydration.json().to_string().find("abc").is_none());
         assert!(Hydration::default().human().is_none());
+    }
+
+    #[test]
+    fn the_lock_only_rises() {
+        assert_eq!(
+            raise_to_secret(TransportLock::Open),
+            TransportLock::SecretReferenced
+        );
+        assert_eq!(
+            raise_to_secret(TransportLock::SecretReferenced),
+            TransportLock::SecretReferenced
+        );
+        assert_eq!(
+            raise_to_secret(TransportLock::DiscoveryFailed),
+            TransportLock::DiscoveryFailed,
+            "a discovery failure keeps its own branch"
+        );
+    }
+
+    fn environment_with(
+        name: &str,
+        parent: Option<&str>,
+        variables: Vec<probe_core::EnvironmentVariable>,
+    ) -> Environment {
+        Environment {
+            name: name.to_owned(),
+            color: None,
+            extends: parent.map(str::to_owned),
+            dot_env_file_path: None,
+            variables,
+        }
+    }
+
+    fn secret(name: &str, disabled: bool) -> probe_core::EnvironmentVariable {
+        probe_core::EnvironmentVariable::Secret(SecretVariable {
+            name: Some(name.to_owned()),
+            value_type: None,
+            disabled,
+        })
+    }
+
+    fn plain(name: &str, disabled: bool) -> probe_core::EnvironmentVariable {
+        probe_core::EnvironmentVariable::Plain(probe_core::Variable {
+            name: Some(name.to_owned()),
+            value: None,
+            disabled,
+        })
+    }
+
+    #[test]
+    fn declared_secrets_span_the_chain_and_respect_shadowing() {
+        let parent = environment_with(
+            "parent",
+            None,
+            vec![secret("kept", false), secret("shadowed", false)],
+        );
+        let child = environment_with("child", Some("parent"), vec![secret("shadowed", false)]);
+        let grandchild = environment_with(
+            "grandchild",
+            Some("child"),
+            vec![plain("shadowed", false), secret("off", true)],
+        );
+        let environments = vec![parent, child, grandchild];
+        let environment = "grandchild";
+        assert_eq!(
+            declared_secret_names(&environments, environment),
+            vec!["kept".to_owned()],
+            "a plain child removes its parent secret name"
+        );
+    }
+
+    #[test]
+    fn case_collisions_name_both_sides_without_values() {
+        let environments = vec![environment_with(
+            "prod",
+            None,
+            vec![secret("token", false), plain("other", false)],
+        )];
+        let request = HttpRequest {
+            url: Some("https://api.localhost/{{ TOKEN }}?q={{ keep }}".to_owned()),
+            ..HttpRequest::default()
+        };
+        let referenced =
+            probe_core::discover_request_variables(&request, &environments, Some("prod"))
+                .expect("refs");
+        let collisions = case_collisions(&referenced, &environments, "prod");
+        assert_eq!(collisions, vec![("TOKEN".to_owned(), "token".to_owned(),)]);
+        // The exact case hits its secret, and an unrelated reference is no
+        // collision at all.
+        let exact = HttpRequest {
+            url: Some("https://api.localhost/{{ token }}".to_owned()),
+            ..HttpRequest::default()
+        };
+        let referenced =
+            probe_core::discover_request_variables(&exact, &environments, Some("prod"))
+                .expect("refs");
+        assert!(case_collisions(&referenced, &environments, "prod").is_empty());
     }
 }

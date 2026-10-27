@@ -238,6 +238,26 @@ impl FacetError {
         }
     }
 
+    /// The `gh` token was asked for a request whose URL is not
+    /// `https://api.github.com`. Refused before `gh` runs; names the host
+    /// only, never the token, path or query.
+    pub(crate) fn github_token_host_refused(host: Option<&str>) -> Self {
+        let error = Self::new(
+            "github_token_host_refused",
+            match host {
+                Some(host) => format!(
+                    "githubToken from gh is sent only to https://api.github.com, not to {host}"
+                ),
+                None => "githubToken from gh is sent only to https://api.github.com".to_owned(),
+            },
+            CONFIGURATION_EXIT_CODE,
+        );
+        match host {
+            Some(host) => error.with_details(json!({ "host": host })),
+            None => error,
+        }
+    }
+
     pub(crate) fn output(path: &std::path::Path, error: &std::io::Error) -> Self {
         Self::new(
             "output_error",

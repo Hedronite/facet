@@ -1,0 +1,35 @@
+opencollection: 1.0.0
+info:
+  name: Body scrub fixture, plain YAML variable
+bundled: true
+config:
+  environments:
+    - name: local
+      variables:
+        - name: token
+          type: string
+items:
+  - info:
+      name: JSON body
+      type: http
+      seq: 1
+    http:
+      method: POST
+      url: "__COLLECTION_URL__/json"
+      body:
+        type: json
+        data: '{"token":"{{token}}","note":"g4-plain-body"}'
+  - info:
+      name: Form body
+      type: http
+      seq: 2
+    http:
+      method: POST
+      url: "__COLLECTION_URL__/form"
+      body:
+        type: form-urlencoded
+        data:
+          - name: token
+            value: "{{token}}"
+          - name: note
+            value: g4 plain body

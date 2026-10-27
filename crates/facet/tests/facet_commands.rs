@@ -2191,10 +2191,14 @@ fn github_gh_auth_and_api_never_persist_token() {
     let sandbox = Sandbox::new();
     let bin = sandbox.root().join("bin");
     fs::create_dir(&bin).unwrap();
+    let marker = sandbox.root().join("gh-auth-ran");
     let gh = bin.join("gh");
     fs::write(
         &gh,
-        "#!/bin/sh\nif [ \"$1\" = auth ]; then printf gh-secret-token; else printf '{\"source\":\"gh\"}'; fi\n",
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = auth ]; then : > '{}'; printf gh-secret-token; else printf '{{\"source\":\"gh\"}}'; fi\n",
+            marker.display()
+        ),
     )
     .unwrap();
     fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
@@ -2215,24 +2219,48 @@ items:
       headers:
         - name: Authorization
           value: Bearer {{githubToken}}
+  - info: { name: Get repo without auth, type: http }
+    http:
+      method: GET
+      url: https://api.github.com.invalid/repos/example/project
 "#;
     let workspace = sandbox.root().join("github.yml");
     fs::write(&workspace, source).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
-    let output = sandbox
-        .facet()
-        .env("PATH", path)
-        .args([
-            "request",
-            "run",
-            workspace.to_str().unwrap(),
-            "items/0",
-            "--environment",
-            "auth",
-            "--json",
-        ])
-        .output()
-        .unwrap();
+    let run = |item: &str| {
+        sandbox
+            .facet()
+            .env("PATH", &path)
+            .args([
+                "request",
+                "run",
+                workspace.to_str().unwrap(),
+                item,
+                "--environment",
+                "auth",
+                "--json",
+            ])
+            .output()
+            .unwrap()
+    };
+
+    // `api.github.com.invalid` is not GitHub: the token is refused before
+    // `gh auth token` runs, and nothing is sent or recorded.
+    let output = run("items/0");
+    assert_eq!(output.status.code(), Some(5));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(envelope["error"]["category"], "github_token_host_refused");
+    assert_eq!(
+        envelope["error"]["details"]["host"],
+        "api.github.com.invalid"
+    );
+    assert!(!marker.exists(), "gh auth token ran for a refused host");
+    assert!(!stdout.contains("gh-secret-token"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("gh-secret-token"));
+
+    // Without `{{githubToken}}`, the `gh api` fallback still answers.
+    let output = run("items/1");
     assert!(
         output.status.success(),
         "{}",
@@ -2240,13 +2268,22 @@ items:
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"source\":\"gh\""));
+    assert!(
+        !marker.exists(),
+        "gh auth token ran without {{githubToken}}"
+    );
     assert!(!stdout.contains("gh-secret-token"));
     assert!(!source.contains("gh-secret-token"));
     let rewritten = fs::read_to_string(&workspace).unwrap();
     assert!(!rewritten.contains("gh-secret-token"));
     let db = rusqlite::Connection::open(sandbox.root().join(".facet/lattice.db")).unwrap();
-    let headers: String = db
-        .query_row("SELECT req_headers FROM runs LIMIT 1", [], |row| row.get(0))
+    let (runs, headers): (i64, String) = db
+        .query_row(
+            "SELECT COUNT(*), group_concat(req_headers) FROM runs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
         .unwrap();
+    assert_eq!(runs, 1, "only the fallback run is recorded");
     assert!(!headers.contains("gh-secret-token"));
 }

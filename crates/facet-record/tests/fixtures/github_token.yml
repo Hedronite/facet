@@ -1,0 +1,58 @@
+opencollection: 1.0.0
+info:
+  name: GitHub token host fixture
+bundled: true
+config:
+  environments:
+    - name: local
+      variables:
+        - name: other
+          value: fn2-plain
+items:
+  - info:
+      name: Token to the mock
+      type: http
+      seq: 1
+    http:
+      method: GET
+      url: "__COLLECTION_URL__/gh"
+      headers:
+        - name: Authorization
+          value: "Bearer {{githubToken}}"
+  - info:
+      name: No token
+      type: http
+      seq: 2
+    http:
+      method: GET
+      url: "__COLLECTION_URL__/plain"
+  - info:
+      name: Token in the host
+      type: http
+      seq: 3
+    http:
+      method: GET
+      url: "https://api.github.com{{githubToken}}/user"
+      headers:
+        - name: Authorization
+          value: "Bearer {{githubToken}}"
+  - info:
+      name: Userinfo before the GitHub host
+      type: http
+      seq: 4
+    http:
+      method: GET
+      url: "https://fn2-user@api.github.com/user"
+      headers:
+        - name: Authorization
+          value: "Bearer {{githubToken}}"
+  - info:
+      name: GitHub host as a prefix
+      type: http
+      seq: 5
+    http:
+      method: GET
+      url: "https://api.github.com.invalid/user"
+      headers:
+        - name: Authorization
+          value: "Bearer {{githubToken}}"

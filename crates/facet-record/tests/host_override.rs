@@ -892,3 +892,211 @@ fn secret_request_refuses_scheme_port_ip_literal_and_scheme_relative_moves() {
         &collection.url,
     );
 }
+
+/// FN-1: a store row with `secret: true` makes the request secret even
+/// when the YAML does not declare the variable secret (`apiKey` is declared
+/// plain, `ghost` not at all).
+const STORE_SECRETS: [(&str, &str, &str); 2] = [
+    ("apiKey", "items/0", "items/1"),
+    ("ghost", "items/2", "items/3"),
+];
+
+#[test]
+fn store_secret_row_locks_a_request_the_yaml_does_not_declare_secret() {
+    for (name, redirect_item, proxied_item) in STORE_SECRETS {
+        let what = format!("store secret {name}, redirect");
+        let landing = Host::spawn_at("[::1]:0");
+        let redirect = Host::redirect_to(&format!("{}/landing", landing.url));
+        let sandbox = Sandbox::with_fixture("store_secret.yml", &redirect.url);
+        sandbox.env_set(name, TOKEN, true);
+        let run = sandbox.request(redirect_item, &[], true);
+        sandbox.assert_clean(&what, &run.stdout);
+        sandbox.assert_clean(&what, &run.stderr);
+        assert_eq!(run.code, Some(0), "{what}: {}", sandbox.scrub(&run.stderr));
+        let head = redirect.hit(&what);
+        assert!(
+            head.lines()
+                .any(|line| line.eq_ignore_ascii_case(&format!("x-key: {TOKEN}"))),
+            "{what}: the store secret is hydrated and sent"
+        );
+        landing.untouched(&what);
+        assert_eq!(
+            sandbox.json(&what, &run)["response"]["status"],
+            302,
+            "{what}: the 302 is the answer"
+        );
+
+        let what = format!("store secret {name}, env proxy");
+        let proxy = Host::spawn();
+        let sandbox = Sandbox::with_fixture("store_secret.yml", "http://127.0.0.1:9");
+        sandbox.env_set(name, TOKEN, true);
+        let run = sandbox.run_with(
+            &[
+                "request",
+                "run",
+                sandbox.ws(),
+                proxied_item,
+                "--environment",
+                "local",
+                "--json",
+            ],
+            Some(&proxy),
+            None,
+        );
+        sandbox.assert_clean(&what, &run.stdout);
+        sandbox.assert_clean(&what, &run.stderr);
+        proxy.untouched(&what);
+        // Direct, the target never resolves; through the proxy it would be 200.
+        assert_ne!(run.code, Some(0), "{what}: only a proxy could answer");
+    }
+}
+
+#[test]
+fn store_secret_row_makes_a_store_host_override_refused() {
+    for (name, item, _) in STORE_SECRETS {
+        let what = format!("store secret {name}, store serverUrl");
+        let collection = Host::spawn();
+        let store = Host::spawn_at("[::1]:0");
+        let mut sandbox = Sandbox::with_fixture("store_secret.yml", &collection.url);
+        sandbox.env_set(name, TOKEN, true);
+        sandbox.store_host("serverUrl", &store);
+        sandbox.assert_refused(&what, item, &[], "serverUrl", &[&store, &collection]);
+    }
+}
+
+#[test]
+fn unreferenced_store_secret_leaves_plain_requests_open() {
+    // The controls for the two tests above: with the same store secret rows
+    // present but not referenced, the same hosts and proxy are used.
+    let landing = Host::spawn_at("[::1]:0");
+    let redirect = Host::redirect_to(&format!("{}/landing", landing.url));
+    let sandbox = Sandbox::with_fixture("store_secret.yml", &redirect.url);
+    sandbox.env_set("apiKey", TOKEN, true);
+    sandbox.env_set("ghost", TOKEN, true);
+    let run = sandbox.request("items/4", &[], true);
+    assert_eq!(
+        run.code,
+        Some(0),
+        "redirect: {}",
+        sandbox.scrub(&run.stdout)
+    );
+    assert!(redirect.hit("redirect").starts_with("GET /plain "));
+    assert!(landing.hit("redirect").starts_with("GET /landing "));
+
+    let proxy = Host::spawn();
+    let run = sandbox.run_with(
+        &[
+            "request",
+            "run",
+            sandbox.ws(),
+            "items/5",
+            "--environment",
+            "local",
+            "--json",
+        ],
+        Some(&proxy),
+        None,
+    );
+    assert_eq!(run.code, Some(0), "proxy: {}", sandbox.scrub(&run.stdout));
+    assert!(
+        proxy
+            .hit("proxy")
+            .starts_with(&format!("GET {PROXY_TARGET}/plain ")),
+        "proxy: unexpected request line"
+    );
+
+    // A store host for a plain request still applies.
+    let collection = Host::spawn();
+    let store = Host::spawn();
+    let mut sandbox = Sandbox::with_fixture("store_secret.yml", &collection.url);
+    sandbox.env_set("apiKey", TOKEN, true);
+    sandbox.store_host("serverUrl", &store);
+    let run = sandbox.request("items/4", &[], true);
+    assert_eq!(
+        run.code,
+        Some(0),
+        "store host: {}",
+        sandbox.scrub(&run.stdout)
+    );
+    store.hit("store host");
+    collection.untouched("store host");
+}
+
+/// The stderr lines that warn about a case-only secret name.
+fn case_warnings(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .filter(|line| line.contains("differs only by case"))
+        .collect()
+}
+
+#[test]
+fn case_only_secret_name_warns_on_run_and_replay_without_changing_the_lock() {
+    // `{{Token}}` against the declared secret `token`: one warning naming
+    // both, no value, and the transport stays open (the redirect is
+    // followed), as it was before the warning existed.
+    let landing = Host::spawn_at("[::1]:0");
+    let redirect = Host::redirect_to(&format!("{}/landing", landing.url));
+    let sandbox = Sandbox::with_fixture("case_secret.yml", &redirect.url);
+    let var = format!("Token={TOKEN}");
+    let run = sandbox.request("items/0", &["--var", &var], true);
+    sandbox.assert_clean("case-only run", &run.stderr);
+    assert_eq!(
+        run.code,
+        Some(0),
+        "case-only run: {}",
+        sandbox.scrub(&run.stderr)
+    );
+    let warnings = case_warnings(&run.stderr);
+    assert_eq!(warnings.len(), 1, "case-only run: one warning");
+    assert!(
+        warnings[0].starts_with("warning: ")
+            && warnings[0].contains("{{Token}}")
+            && warnings[0].contains("token"),
+        "case-only run: the warning names both variables"
+    );
+    assert!(redirect.hit("case-only run").starts_with("GET /case "));
+    assert!(
+        landing.hit("case-only run").starts_with("GET /landing "),
+        "case-only run: the lock is unchanged, the redirect is followed"
+    );
+
+    let run_id = sandbox.json("case-only run", &run)["lattice"]["runId"]
+        .as_str()
+        .expect("recorded")
+        .to_owned();
+    let replay = sandbox.run(&["replay", &run_id, sandbox.ws(), "--var", &var, "--json"]);
+    sandbox.assert_clean("case-only replay", &replay.stderr);
+    assert_eq!(
+        replay.code,
+        Some(0),
+        "case-only replay: {}",
+        sandbox.scrub(&replay.stderr)
+    );
+    assert_eq!(
+        case_warnings(&replay.stderr).len(),
+        1,
+        "case-only replay: one warning"
+    );
+    redirect.hit("case-only replay");
+    landing.hit("case-only replay");
+
+    // The exact name and an unrelated name do not warn.
+    for (item, extra) in [
+        (
+            "items/1",
+            vec!["--var".to_owned(), format!("token={TOKEN}")],
+        ),
+        ("items/2", Vec::new()),
+    ] {
+        let what = format!("{item} does not warn");
+        let host = Host::spawn();
+        let sandbox = Sandbox::with_fixture("case_secret.yml", &host.url);
+        let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+        let run = sandbox.request(item, &extra, true);
+        sandbox.assert_clean(&what, &run.stderr);
+        assert_eq!(run.code, Some(0), "{what}: {}", sandbox.scrub(&run.stderr));
+        host.hit(&what);
+        assert!(case_warnings(&run.stderr).is_empty(), "{what}");
+    }
+}

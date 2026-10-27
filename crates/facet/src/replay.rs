@@ -24,8 +24,8 @@ use crate::{
     CommandOutput, FacetError, args,
     expect::{EXPECT_FAIL_TAG, Expectation},
     run::{
-        add_auth_token, execute, execute_locked, hydrate, lookup_request, parse_vars, policy_for,
-        render, resolve_selected, var_names, with_secrets,
+        add_auth_token, case_warnings, hydrate, lookup_request, parse_vars, policy_for, render,
+        resolve_selected, send, var_names, with_secrets,
     },
     workspace::{WorkspaceInput, load, open_store, overrides_from_parsed},
 };
@@ -136,8 +136,22 @@ fn replay_unredacted(
         &loaded,
         &variables,
     )?;
+    warnings.extend(case_warnings(&hydration));
     let mut merged_variables = hydration.merged(&variables);
-    add_auth_token(raw, &mut hydration, &mut merged_variables);
+    add_auth_token(
+        &loaded,
+        raw,
+        environment.as_deref(),
+        &mut hydration,
+        &mut merged_variables,
+    )
+    .map_err(|mut error| {
+        // Kept beside `details.host` on a refusal, or alone on a resolve
+        // error, as the resolve below reports it.
+        let details = error.details.get_or_insert_with(|| json!({}));
+        details["replayedFrom"] = json!(row.id);
+        error
+    })?;
     *redactor = Redactor::new(hydration.redact.iter().cloned());
     let request = resolve_selected(
         &loaded,
@@ -166,11 +180,7 @@ fn replay_unredacted(
     }
 
     // 5. Send and record with lineage.
-    let execution = if hydration.references_secret {
-        execute_locked(&request, input.base_directory(), None)?
-    } else {
-        execute(&request, input.base_directory(), None)?
-    };
+    let execution = send(&request, &hydration, input.base_directory(), None)?;
     let status = execution
         .result
         .as_ref()

@@ -15,7 +15,8 @@ use facet_record::{
 };
 use lattice::now_ms;
 use probe_core::{
-    HttpRequest, resolve_environment_with_overrides, resolve_request, resolve_request_strict,
+    HttpRequest, TransportLock, resolve_environment_with_overrides, resolve_request,
+    resolve_request_strict,
 };
 use probe_http::{ExecutionOptions, HttpError, HttpResponse};
 use probe_opencollection::LoadedWorkspace;
@@ -104,7 +105,13 @@ fn run_unredacted(
         &variables,
     )?;
     let mut merged_variables = hydration.merged(&variables);
-    add_auth_token(raw, &mut hydration, &mut merged_variables);
+    add_auth_token(
+        &loaded,
+        raw,
+        environment.as_deref(),
+        &mut hydration,
+        &mut merged_variables,
+    )?;
     *redactor = Redactor::new(hydration.redact.iter().cloned());
     let request = resolve_selected(
         &loaded,
@@ -114,13 +121,17 @@ fn run_unredacted(
         strict_variables,
     )?;
     if dry_run {
-        return Ok(dry_run_output(&request, &hydration, environment.is_some()));
+        let preview = dry_run_output(&request, &hydration, environment.is_some());
+        return Ok(case_warnings(&hydration)
+            .into_iter()
+            .fold(preview, CommandOutput::warn));
     }
-    let execution = if hydration.references_secret {
-        execute_locked(&request, input.base_directory(), output.as_deref())?
-    } else {
-        execute(&request, input.base_directory(), output.as_deref())?
-    };
+    let execution = send(
+        &request,
+        &hydration,
+        input.base_directory(),
+        output.as_deref(),
+    )?;
     let status = execution
         .result
         .as_ref()
@@ -171,7 +182,10 @@ fn run_unredacted(
         output.as_deref(),
         lattice_json,
         lattice_human,
-        recording.warning().into_iter().collect(),
+        case_warnings(&hydration)
+            .into_iter()
+            .chain(recording.warning())
+            .collect(),
         redactor,
     )?;
     Ok(match miss {
@@ -299,18 +313,99 @@ pub(crate) fn policy_for(
 }
 
 /// The `githubToken` the request's Authorization header references, from
-/// `gh`, merged last and added to the values the run redacts.
+/// `gh`, merged last and added to the values the run redacts. The token
+/// goes only to `https://api.github.com`: any other rendered URL fails
+/// `github_token_host_refused` before `gh` runs. Once injected, the request
+/// is a secret request and sends locked.
 pub(crate) fn add_auth_token(
+    loaded: &LoadedWorkspace,
     request: &HttpRequest,
+    environment: Option<&str>,
     hydration: &mut Hydration,
     merged_variables: &mut Vec<(String, String)>,
-) {
+) -> Result<(), FacetError> {
+    if !wants_auth_token(request, merged_variables) {
+        return Ok(());
+    }
+    // Rendered with a stand-in that no allowed URL can hold where the
+    // authority ends, so a `{{githubToken}}` in the host or port refuses.
+    let mut stand_in = merged_variables.clone();
+    stand_in.push(("githubToken".to_owned(), "<githubToken>".to_owned()));
+    let rendered = resolve_selected(loaded, request, environment, &stand_in, false)?;
+    let url = rendered.url.as_deref().unwrap_or_default();
+    if !is_github_api(url) {
+        return Err(FacetError::github_token_host_refused(url_host(url)));
+    }
     if let Some(token) = facet_record::auth_token_for(request, merged_variables) {
         merged_variables.push(("githubToken".to_owned(), token.clone()));
         hydration.redact.push(token);
         hydration.hydrated.push("githubToken".to_owned());
         hydration.source = Some("gh");
+        if !hydration.lock.is_locked() {
+            hydration.lock = TransportLock::SecretReferenced;
+        }
+        hydration.references_secret = true;
     }
+    Ok(())
+}
+
+/// Whether [`facet_record::auth_token_for`] would ask `gh`: the
+/// Authorization header references `{{githubToken}}` and no non-empty
+/// variable supplies it. Decided without running `gh`.
+fn wants_auth_token(request: &HttpRequest, variables: &[(String, String)]) -> bool {
+    request.headers.iter().any(|header| {
+        header.name.eq_ignore_ascii_case("authorization")
+            && header.value.contains("{{githubToken}}")
+    }) && !variables
+        .iter()
+        .any(|(name, value)| name == "githubToken" && !value.is_empty())
+}
+
+/// `https://api.github.com`, ignoring ASCII case, with no userinfo, port
+/// 443 or none, and nothing after the authority but a path, query or
+/// fragment. Anything else, including a URL that does not parse, is not.
+fn is_github_api(url: &str) -> bool {
+    const ORIGIN: &str = "https://api.github.com";
+    let Some(origin) = url.get(..ORIGIN.len()) else {
+        return false;
+    };
+    if !origin.eq_ignore_ascii_case(ORIGIN) {
+        return false;
+    }
+    let rest = &url[ORIGIN.len()..];
+    let rest = rest.strip_prefix(":443").unwrap_or(rest);
+    rest.is_empty() || rest.starts_with(['/', '?', '#'])
+}
+
+/// The host of `url` for an error: the authority without userinfo or
+/// port, or `None` when there is none. Never the path or query.
+fn url_host(url: &str) -> Option<&str> {
+    let (_, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = match host.rfind(':') {
+        Some(colon) if !host[colon..].contains(']') => &host[..colon],
+        _ => host,
+    };
+    (!host.is_empty()).then_some(host)
+}
+
+/// One warning per referenced name that is only a case away from a
+/// declared secret (`{{Token}}` against `token`): that reference is not the
+/// secret, so it is neither hydrated nor treated as one. Names only.
+pub(crate) fn case_warnings(hydration: &Hydration) -> Vec<String> {
+    hydration
+        .secret_case_collisions
+        .iter()
+        .map(|(referenced, secret)| {
+            format!(
+                "{{{{{referenced}}}}} differs only by case from the declared secret \
+                 {secret}; it is not treated as that secret"
+            )
+        })
+        .collect()
 }
 
 /// Adds `lattice.secrets` (names only) whenever an environment was selected,
@@ -352,6 +447,21 @@ pub(crate) fn parse_vars(parsed: &args::Parsed) -> Result<Vec<(String, String)>,
 /// The names of the `--var` overrides, in order; values never leave here.
 pub(crate) fn var_names(variables: &[(String, String)]) -> Vec<String> {
     variables.iter().map(|(name, _)| name.clone()).collect()
+}
+
+/// Sends `request` for `run` and `replay`: [`execute_locked`] for a secret
+/// request (including one carrying the `gh` token), [`execute`] otherwise.
+pub(crate) fn send(
+    request: &HttpRequest,
+    hydration: &Hydration,
+    base_directory: Option<PathBuf>,
+    output: Option<&Path>,
+) -> Result<Execution, FacetError> {
+    if hydration.references_secret {
+        execute_locked(request, base_directory, output)
+    } else {
+        execute(request, base_directory, output)
+    }
 }
 
 /// Executes one resolved request on a fresh single-thread runtime, with
@@ -501,5 +611,193 @@ pub(crate) fn resolve_selected<'a>(
         .map_err(FacetError::configuration)
     } else {
         Ok(Cow::Borrowed(request))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::{os::unix::fs::PermissionsExt, path::Path, process::Command};
+
+    use super::*;
+
+    /// What the stub `gh auth token` prints: a canary, never a credential.
+    const GH_TOKEN: &str = "fn2-unit-gh-canary";
+    /// Set only in the child process [`gh_token_is_injected_only_for_github_api`]
+    /// starts with the stub `gh` first on `PATH`.
+    const CHILD: &str = "FACET_FN2_STUB_GH_MARKER";
+
+    const COLLECTION: &str = r#"opencollection: 1.0.0
+info:
+  name: FN-2 unit
+bundled: true
+items:
+  - info: { name: GitHub, type: http, seq: 1 }
+    http:
+      method: GET
+      url: "{{base}}/user"
+      headers:
+        - name: Authorization
+          value: "Bearer {{githubToken}}"
+"#;
+
+    #[test]
+    fn github_api_url_is_https_api_github_com_only() {
+        for url in [
+            "https://api.github.com",
+            "https://api.github.com/",
+            "https://api.github.com/user",
+            "https://API.GitHub.COM/user",
+            "https://api.github.com:443/user",
+            "https://api.github.com?x=1",
+            "https://api.github.com#x",
+        ] {
+            assert!(is_github_api(url), "{url} should be allowed");
+        }
+        for url in [
+            "",
+            "api.github.com/user",
+            "http://api.github.com/user",
+            "https://api.github.com:8443/user",
+            "https://api.github.com:4430/user",
+            "https://api.github.com:/user",
+            "https://api.github.com./user",
+            "https://api.github.com.invalid/user",
+            "https://api.github.community/user",
+            "https://user@api.github.com/user",
+            "https://user:pass@api.github.com/user",
+            "https://api.github.com@127.0.0.1/user",
+            "https://api.github.com\\@127.0.0.1/user",
+            "https://api.github.com<githubToken>/user",
+            "https://github.com/user",
+            "http://127.0.0.1:9/user",
+            " https://api.github.com/user",
+        ] {
+            assert!(!is_github_api(url), "{url} should be refused");
+        }
+    }
+
+    #[test]
+    fn refused_host_is_named_without_userinfo_port_or_path() {
+        assert_eq!(url_host("http://127.0.0.1:9/x?q=1"), Some("127.0.0.1"));
+        assert_eq!(url_host("https://u:p@evil.test/x"), Some("evil.test"));
+        assert_eq!(url_host("https://[::1]:8080/x"), Some("[::1]"));
+        assert_eq!(url_host("https://[::1]/x"), Some("[::1]"));
+        assert_eq!(url_host("not a url"), None);
+        assert_eq!(url_host("https:///x"), None);
+    }
+
+    #[test]
+    fn a_supplied_github_token_never_asks_gh() {
+        let loaded = load(&WorkspaceInput::Stdin, &mut COLLECTION.as_bytes()).unwrap();
+        let request = lookup_request(&loaded, "items/0").unwrap();
+        assert!(wants_auth_token(request, &[]));
+        assert!(wants_auth_token(
+            request,
+            &[("githubToken".to_owned(), String::new())]
+        ));
+        assert!(!wants_auth_token(
+            request,
+            &[("githubToken".to_owned(), "user-value".to_owned())]
+        ));
+    }
+
+    /// Runs [`stub_gh_child`] in a child process with a stub `gh` first on
+    /// `PATH`: the test never changes its own environment and never touches
+    /// the network.
+    #[test]
+    fn gh_token_is_injected_only_for_github_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("gh-ran");
+        let gh = dir.path().join("gh");
+        std::fs::write(
+            &gh,
+            format!(
+                "#!/bin/sh\n: > '{}'\nprintf '%s\\n' '{GH_TOKEN}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            dir.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "run::tests::stub_gh_child", "--ignored"])
+            .args(["--nocapture", "--test-threads=1"])
+            .env("PATH", path)
+            .env(CHILD, &marker)
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "stub gh child failed:\n{}",
+            String::from_utf8_lossy(&child.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&child.stdout).contains("1 passed"),
+            "the stub gh child test should run"
+        );
+    }
+
+    #[test]
+    #[ignore = "run by gh_token_is_injected_only_for_github_api"]
+    fn stub_gh_child() {
+        let Some(marker) = std::env::var_os(CHILD) else {
+            return;
+        };
+        let marker = Path::new(&marker);
+        let loaded = load(&WorkspaceInput::Stdin, &mut COLLECTION.as_bytes()).unwrap();
+        let request = lookup_request(&loaded, "items/0").unwrap();
+        let token = |merged: &[(String, String)]| {
+            merged
+                .iter()
+                .any(|(name, value)| name == "githubToken" && value == GH_TOKEN)
+        };
+
+        // A loopback URL: refused before gh runs, nothing injected.
+        let mut hydration = Hydration::default();
+        let mut merged = vec![("base".to_owned(), "http://127.0.0.1:9".to_owned())];
+        let error = add_auth_token(&loaded, request, None, &mut hydration, &mut merged)
+            .expect_err("a loopback URL should refuse the gh token");
+        assert_eq!(error.category, "github_token_host_refused");
+        assert_eq!(error.details, Some(json!({ "host": "127.0.0.1" })));
+        assert!(!marker.exists(), "gh ran for a refused host");
+        assert!(
+            !token(&merged),
+            "the gh token was injected for a refused host"
+        );
+        assert!(hydration.redact.is_empty() && hydration.hydrated.is_empty());
+        assert!(!hydration.lock.is_locked() && !hydration.references_secret);
+
+        // https://api.github.com: gh runs, the token is merged last and
+        // redacted, and the request becomes a locked secret request, which
+        // `send` gives to `execute_locked` for run and replay alike.
+        let mut hydration = Hydration::default();
+        let mut merged = vec![("base".to_owned(), "https://API.github.com".to_owned())];
+        add_auth_token(&loaded, request, None, &mut hydration, &mut merged)
+            .expect("api.github.com should take the gh token");
+        assert!(marker.exists(), "gh should run for api.github.com");
+        assert!(
+            token(&merged),
+            "the gh token should be in the merged variables"
+        );
+        assert!(hydration.redact.iter().any(|value| value == GH_TOKEN));
+        assert_eq!(hydration.hydrated, ["githubToken"]);
+        assert_eq!(hydration.source, Some("gh"));
+        assert_eq!(hydration.lock, TransportLock::SecretReferenced);
+        assert!(hydration.lock.is_locked());
+        assert!(hydration.references_secret);
+
+        // An existing lock is kept, never lowered.
+        let mut hydration = Hydration {
+            lock: TransportLock::VarUnclassified,
+            ..Hydration::default()
+        };
+        let mut merged = vec![("base".to_owned(), "https://api.github.com".to_owned())];
+        add_auth_token(&loaded, request, None, &mut hydration, &mut merged).unwrap();
+        assert_eq!(hydration.lock, TransportLock::VarUnclassified);
+        assert!(hydration.references_secret);
     }
 }

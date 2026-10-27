@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use facet_record::{ConfigOverrides, RecordRequest, Recording, record};
+use facet_record::{ConfigOverrides, RecordPolicy, RecordRequest, Recording, record};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use lattice::{
@@ -3068,8 +3068,7 @@ impl App {
                 &hydration.overrides,
             )
             .map_err(|error| error.to_string())?;
-            // Hydration decides with the same predicate and inputs.
-            debug_assert_eq!(hydration.lock, lock);
+            let lock = hydrated_lock(lock, hydration.lock);
             prepared = resolve_request(&prepared, &resolved).map_err(|error| error.to_string())?;
             return Ok((prepared, hydration.redact, lock));
         }
@@ -3077,20 +3076,30 @@ impl App {
     }
 
     async fn run_selected(&mut self) -> Result<(), TuiError> {
-        if self.pending.is_some() {
-            return Ok(());
-        }
-        // Facts for Lattice, captured before the task takes the request.
-        let root = self.base_directory();
         let selector = self
             .tree
             .selected_request_key()
             .and_then(|key| self.loaded.as_ref()?.request_selector(key))
             .map(str::to_string);
+        self.send_selected(selector).await
+    }
+
+    /// Sends the selected request and records it under `selector`. Split
+    /// from [`Self::run_selected`] so a test can send without a selector.
+    async fn send_selected(&mut self, selector: Option<String>) -> Result<(), TuiError> {
+        if self.pending.is_some() {
+            return Ok(());
+        }
+        // Facts for Lattice, captured before the task takes the request.
+        let root = self.base_directory();
         // The `facet:` key is read back from the source before anything is
         // sent. An invalid key stops the send and names the key path only.
         let policy =
             match facet_record::record_policy(root.as_deref(), selector.as_deref().unwrap_or("")) {
+                // With a source on disk but no selector, no `facet:` rule
+                // can be tied to this request: record nothing. The request
+                // is still sent.
+                Ok(_) if root.is_some() && selector.is_none() => RecordPolicy::Forbidden,
                 Ok(policy) => policy,
                 Err(error) => {
                     self.status = RunStatus::Failed(format!("{}: {error}", error.category()));
@@ -3559,6 +3568,18 @@ impl App {
     }
 }
 
+/// The lock a send uses once hydration ran: hydration's, which can only
+/// raise the predicate's (a store row marked secret locks a variable the
+/// YAML declares plain). Were it ever lower, the predicate's lock stands,
+/// so a send is never less strict than the declarations say.
+fn hydrated_lock(predicate: TransportLock, hydration: TransportLock) -> TransportLock {
+    if predicate.is_locked() && !hydration.is_locked() {
+        predicate
+    } else {
+        hydration
+    }
+}
+
 /// Stored response body for the replayed view: inline bytes or the blob,
 /// capped at 16 MiB; over that the pane says `blob <hash> · omitted`.
 fn hydrated_body(store: &WorkspaceStore, row: &RunRow) -> String {
@@ -3764,6 +3785,39 @@ fn build_update(method: &str, editor: &Editor) -> RequestUpdate {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A temp dir name no other test in this process can share. `cargo
+    /// test` runs every test as a thread of one process, and the macOS clock
+    /// ticks in microseconds, so pid and time alone collide; the counter
+    /// does not.
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    /// Asserts `collection` is mounted. A failed load keeps the old root and
+    /// puts its reason in the status, so the failure message carries it.
+    #[track_caller]
+    fn assert_mounted(app: &App, collection: &Path) {
+        let mounted = app
+            .workspace_root()
+            .and_then(|root| root.canonicalize().ok());
+        let expected = collection.parent().and_then(|dir| dir.canonicalize().ok());
+        assert!(
+            mounted.is_some() && mounted == expected,
+            "mounted {mounted:?}, expected {expected:?}; status {:?}",
+            app.status
+        );
+    }
 
     fn fixture() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -4424,14 +4478,7 @@ mod tests {
     /// Temp collection dir with a Lattice store holding two runs; the
     /// first has an inline response body for the hydrate path.
     async fn app_with_store() -> (std::path::PathBuf, App) {
-        let dir = std::env::temp_dir().join(format!(
-            "facet-tui-s2-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = unique_temp_dir("facet-tui-s2");
         std::fs::create_dir_all(&dir).unwrap();
         let yaml = dir.join("collection.yml");
         std::fs::copy(fixture(), &yaml).unwrap();
@@ -4467,19 +4514,17 @@ mod tests {
             .unwrap();
         drop(store);
         let app = App::load(Some(&yaml)).await;
+        assert!(
+            app.loaded.is_some(),
+            "store fixture loads; status {:?}",
+            app.status
+        );
         (dir, app)
     }
 
     /// Two collections in separate directories, each with its own store.
     async fn two_collections() -> (PathBuf, PathBuf, PathBuf, App) {
-        let base = std::env::temp_dir().join(format!(
-            "facet-tui-open-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let base = unique_temp_dir("facet-tui-open");
         let first = base.join("alpha");
         let second = base.join("beta");
         std::fs::create_dir_all(&first).unwrap();
@@ -4509,6 +4554,11 @@ mod tests {
         WorkspaceStore::open(&second, LatticeConfig::default()).unwrap();
 
         let mut app = App::load(Some(&first_yaml)).await;
+        assert!(
+            app.loaded.is_some(),
+            "first collection loads; status {:?}",
+            app.status
+        );
         app.preview_machine_dir(base.join("machine"));
         (base, first_yaml, second_yaml, app)
     }
@@ -4521,11 +4571,8 @@ mod tests {
         app.execute_command().await.unwrap();
 
         assert!(!app.should_quit, ":open must not quit the TUI");
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-            "the workspace root follows the newly opened collection"
-        );
+        // The workspace root follows the newly opened collection.
+        assert_mounted(&app, &second);
         assert!(app.has_collection());
         std::fs::remove_dir_all(&base).ok();
     }
@@ -4617,10 +4664,7 @@ mod tests {
             .unwrap();
 
         assert!(app.open_picker().is_none(), "Enter closes the picker");
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-        );
+        assert_mounted(&app, &second);
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -4688,11 +4732,12 @@ mod tests {
             .await
             .unwrap();
         assert!(app.open_confirm().is_none());
-        assert!(!app.editor_dirty, "remount resets the dirty flag");
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
+        assert!(
+            !app.editor_dirty,
+            "remount resets the dirty flag; status {:?}",
+            app.status
         );
+        assert_mounted(&app, &second);
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -4779,10 +4824,7 @@ mod tests {
 
         app.open_path(&second);
 
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-        );
+        assert_mounted(&app, &second);
         assert!(
             !app.is_in_flight(),
             "remount drops both channels (pending={}, cancel={})",
@@ -4839,11 +4881,8 @@ mod tests {
 
         app.command = format!("open {}", second.display());
         app.execute_command().await.unwrap();
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-            "the switch goes through once nothing is in flight"
-        );
+        // The switch goes through once nothing is in flight.
+        assert_mounted(&app, &second);
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -5217,6 +5256,7 @@ mod tests {
             .unwrap();
         assert!(redraw);
     }
+
     /// Selects the request named `name` and syncs the editor, as a tree
     /// click does.
     fn select_request_named(app: &mut App, name: &str) {
@@ -5246,14 +5286,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_lock_keeps_secret_send_locked() {
-        let dir = std::env::temp_dir().join(format!(
-            "facet-tui-lock-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = unique_temp_dir("facet-tui-lock");
         std::fs::create_dir_all(&dir).unwrap();
         let yaml = dir.join("collection.yml");
         std::fs::copy(
@@ -5284,18 +5317,12 @@ mod tests {
         assert_eq!(lock, TransportLock::DiscoveryFailed);
         std::fs::remove_dir_all(&dir).ok();
     }
+
     /// A bundled collection in a temp dir, with a store beside it so an
     /// allowed run would record, and one request to `url` carrying
     /// `item_facet` as its item-level YAML.
     async fn app_with_policy(tag: &str, url: &str, item_facet: &str) -> (PathBuf, App) {
-        let dir = std::env::temp_dir().join(format!(
-            "facet-tui-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = unique_temp_dir(&format!("facet-tui-{tag}"));
         std::fs::create_dir_all(&dir).unwrap();
         let yaml = dir.join("collection.yml");
         std::fs::write(
@@ -5313,7 +5340,11 @@ mod tests {
         .unwrap();
         drop(WorkspaceStore::open(&dir, LatticeConfig::default()).unwrap());
         let app = App::load(Some(&yaml)).await;
-        assert!(app.selected_request().is_some(), "collection loads");
+        assert!(
+            app.selected_request().is_some(),
+            "collection loads; status {:?}",
+            app.status
+        );
         (dir, app)
     }
 
@@ -5325,8 +5356,9 @@ mod tests {
             .len()
     }
 
-    #[tokio::test]
-    async fn forbidden_request_is_sent_but_writes_no_row() {
+    /// A loopback server that answers one request with `200 ok`. Joining
+    /// the handle proves the request reached it.
+    fn one_shot_server() -> (String, std::thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/ping", listener.local_addr().unwrap());
         let server = std::thread::spawn(move || {
@@ -5338,16 +5370,26 @@ mod tests {
                 .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok")
                 .unwrap();
         });
-        let (dir, mut app) =
-            app_with_policy("policy-forbid", &url, "facet: { record: false }").await;
+        (url, server)
+    }
 
-        app.run_selected().await.unwrap();
+    async fn finish_send(app: &mut App) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.is_in_flight() {
             assert!(Instant::now() < deadline, "send did not finish");
             app.poll_pending();
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn forbidden_request_is_sent_but_writes_no_row() {
+        let (url, server) = one_shot_server();
+        let (dir, mut app) =
+            app_with_policy("policy-forbid", &url, "facet: { record: false }").await;
+
+        app.run_selected().await.unwrap();
+        finish_send(&mut app).await;
         server.join().expect("the request reached the server");
 
         assert!(
@@ -5382,6 +5424,68 @@ mod tests {
         assert!(message.contains("facet.record"), "{message}");
         assert!(!message.contains("sk-live-canary"), "{message}");
         assert!(app.last_recording().is_none());
+        assert_eq!(stored_runs(&dir), 0);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// FN-1: with an environment selected, a variable the YAML declares
+    /// plain passes the predicate as Open, and a store row marked secret
+    /// raises hydration's lock. The send takes the raised lock in every
+    /// build profile, debug or release.
+    #[tokio::test]
+    async fn store_secret_row_locks_a_yaml_plain_variable() {
+        let mut app = App::load(Some(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/opencollection/phase4-environments.yml"),
+        ))
+        .await;
+        select_request_named(&mut app, "Resolved users");
+        app.command = "env development".to_string();
+        app.execute_command().await.unwrap();
+        assert_eq!(app.active_environment_name(), Some("development"));
+        let request = app.selected_request().map(|(_, r)| r.clone()).unwrap();
+        // `token` is declared plain, so the declaration-based predicate is
+        // Open on its own.
+        let predicate = app.send_lock(&request);
+        assert_eq!(predicate, TransportLock::Open);
+
+        let lock = hydrated_lock(predicate, TransportLock::SecretReferenced);
+        assert_eq!(lock, TransportLock::SecretReferenced);
+        assert!(lock.is_locked());
+        // Hydration that locks nothing leaves a plain send open, and can
+        // never open a send the predicate locked.
+        assert_eq!(
+            hydrated_lock(TransportLock::Open, TransportLock::Open),
+            TransportLock::Open
+        );
+        assert_eq!(
+            hydrated_lock(TransportLock::SecretReferenced, TransportLock::Open),
+            TransportLock::SecretReferenced
+        );
+    }
+
+    /// SecOps review #53 N-1: a send with a workspace root but no selector cannot tie
+    /// a `facet:` rule to its request, so it records nothing. The request is
+    /// still sent. No `facet:` key is present, so only the missing selector
+    /// withholds the row.
+    #[tokio::test]
+    async fn send_without_a_selector_is_sent_but_writes_no_row() {
+        let (url, server) = one_shot_server();
+        let (dir, mut app) = app_with_policy("policy-no-selector", &url, "# no facet key").await;
+        assert!(app.workspace_root().is_some(), "a root is present");
+
+        app.send_selected(None).await.unwrap();
+        finish_send(&mut app).await;
+        server.join().expect("the request reached the server");
+
+        assert!(
+            matches!(app.status, RunStatus::Done { status: 200, .. }),
+            "{:?}",
+            app.status
+        );
+        let summary = app.last_recording().expect("record was consulted");
+        assert_eq!(summary.note, "facet_policy");
+        assert_eq!(summary.run_id, None);
         assert_eq!(stored_runs(&dir), 0);
         std::fs::remove_dir_all(&dir).ok();
     }

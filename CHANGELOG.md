@@ -39,6 +39,27 @@ separate version axes and do not move with this release.
   the raw request, so `replay --frozen` matches as before. Response bodies
   are stored as received. Bodies recorded before this change keep what
   they were stored with.
+- A request that references a variable hydrated from a machine-store row
+  stored with `--secret` is now treated as secret even when the collection
+  YAML does not declare that variable secret. With an environment
+  selected, it is sent with the locked transport (no redirects, no
+  `HTTP_PROXY` / `HTTPS_PROXY`), and a store row that would move its host
+  fails with `host_override_refused` before anything is sent. Earlier, such
+  a request was sent unlocked and the host-override check skipped it.
+- The `facet:` recording rule fails closed. In a bundled collection, an
+  empty selector, one that does not resolve, or one that resolves to
+  something other than a request records nothing. In an unbundled
+  collection, so does a selector that leaves the collection (`..`, an
+  absolute path, a symlink escape). The request is still sent; no run row
+  or blob is written.
+- The `githubToken` that `request run` and `replay` take from `gh` is sent
+  only to `https://api.github.com`, port 443 or none, with no userinfo. Any
+  other URL fails with `github_token_host_refused` (exit 5) before `gh` runs
+  and before anything is sent, in `--dry-run` too; the error names the host,
+  never the token. A request carrying that token is now sent with the locked
+  transport (no redirects, no `HTTP_PROXY` / `HTTPS_PROXY`). Earlier, the
+  token went to whatever host the collection named, with redirects and the
+  env proxy allowed. A `--var githubToken=…` is sent as before.
 
 ### Fixed
 

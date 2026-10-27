@@ -10,6 +10,11 @@
 //! `requestHash` still hashes the raw body, so a dry run of the same
 //! request and a `--frozen` replay both match it.
 //!
+//! A store row stored with `--secret` is a known secret even when the YAML
+//! declares its variable plain (SecOps review #54): its value is scrubbed from the
+//! stored body the same way. The control is the same request over a plain
+//! store row, whose stored body keeps the value.
+//!
 //! These drive the shipped `facet` binary. Every value below is a canary,
 //! and no assertion message prints one.
 
@@ -129,8 +134,14 @@ struct Sandbox {
 
 impl Sandbox {
     fn new(collection_url: &str) -> Self {
+        Self::with_fixture(collection_url, "body_scrub.yml")
+    }
+
+    fn with_fixture(collection_url: &str, fixture: &str) -> Self {
         let dir = tempfile::tempdir().expect("temporary directory");
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/body_scrub.yml");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(fixture);
         let source = std::fs::read_to_string(fixture).expect("fixture");
         let workspace = dir.path().join("workspace.yml");
         std::fs::write(
@@ -146,6 +157,18 @@ impl Sandbox {
     }
 
     fn run(&self, arguments: &[&str]) -> Run {
+        let output = self.output(arguments);
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert_clean(&format!("facet {}", arguments[0]), "stderr", &output.stderr);
+        Run {
+            code: output.status.code(),
+            stdout,
+        }
+    }
+
+    /// `facet <arguments>`, unchecked: the plain-row control expects the
+    /// token in what it reads back.
+    fn output(&self, arguments: &[&str]) -> std::process::Output {
         let root = self.dir.path();
         let mut command = Command::new(common::bins::shipped("facet"));
         command
@@ -169,17 +192,11 @@ impl Sandbox {
         for name in PROXY_VARS {
             command.env_remove(name);
         }
-        let output = command
+        command
             .args(arguments)
             .stdin(Stdio::null())
             .output()
-            .expect("facet should run");
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        assert_clean(&format!("facet {}", arguments[0]), "stderr", &output.stderr);
-        Run {
-            code: output.status.code(),
-            stdout,
-        }
+            .expect("facet should run")
     }
 
     fn json(&self, what: &str, arguments: &[&str]) -> Value {
@@ -193,8 +210,17 @@ impl Sandbox {
     /// Every file under the sandbox except the collection itself: the
     /// workspace store, its blobs, and the machine store.
     fn assert_store_clean(&self, what: &str) {
+        let files = self.store_files();
+        for (name, bytes) in &files {
+            assert_clean(what, name, bytes);
+        }
+        assert!(!files.is_empty(), "{what}: the store was written");
+    }
+
+    /// Each file under the sandbox except the collection, by relative name.
+    fn store_files(&self) -> Vec<(String, Vec<u8>)> {
         let mut pending = vec![self.dir.path().to_owned()];
-        let mut files = 0;
+        let mut files = Vec::new();
         while let Some(dir) = pending.pop() {
             for entry in std::fs::read_dir(&dir).unwrap().filter_map(Result::ok) {
                 let path = entry.path();
@@ -207,23 +233,25 @@ impl Sandbox {
                         .unwrap_or(&path)
                         .display()
                         .to_string();
-                    assert_clean(what, &name, &bytes);
-                    files += 1;
+                    files.push((name, bytes));
                 }
             }
         }
-        assert!(files > 0, "{what}: the store was written");
+        files
     }
 }
 
 /// No copy of the token, in any encoding. Reports where, not what.
 fn assert_clean(what: &str, place: &str, bytes: &[u8]) {
-    if let Some(offset) = bytes
-        .windows(STEM.len())
-        .position(|window| window == STEM.as_bytes())
-    {
+    if let Some(offset) = find(bytes, STEM) {
         panic!("{what}: the token is in {place} at byte {offset}");
     }
+}
+
+fn find(bytes: &[u8], needle: &str) -> Option<usize> {
+    bytes
+        .windows(needle.len())
+        .position(|window| window == needle.as_bytes())
 }
 
 /// Where the declared secret comes from.
@@ -403,6 +431,138 @@ fn request_bodies_are_scrubbed_at_write_and_still_hash_raw() {
                     "{what}: the replay hashes the same raw request"
                 );
                 sandbox.assert_store_clean(&format!("{what}, after replay"));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_secret_store_row_over_a_plain_yaml_variable_is_scrubbed_from_the_body() {
+    for body in BODIES {
+        for secret in [true, false] {
+            let row = if secret { "secret" } else { "plain" };
+            let what = format!("{} over a {row} store row", body.item);
+            let host = Host::spawn();
+            let sandbox = Sandbox::with_fixture(&host.url, "body_scrub_plain.yml");
+            let mut set = vec![
+                "env",
+                "set",
+                sandbox.ws(),
+                "--environment",
+                "local",
+                "--name",
+                "token",
+                "--value",
+                TOKEN,
+                "--json",
+            ];
+            if secret {
+                set.push("--secret");
+            }
+            let set = sandbox.output(&set);
+            assert_eq!(set.status.code(), Some(0), "{what}: env set");
+
+            let run = sandbox.output(&[
+                "request",
+                "run",
+                sandbox.ws(),
+                body.item,
+                "--environment",
+                "local",
+                "--json",
+            ]);
+            assert_eq!(run.status.code(), Some(0), "{what}: run exit");
+            // The store row was hydrated and sent either way.
+            let sent = host.body(&what);
+            assert!(
+                find(&sent, body.sent).is_some(),
+                "{what}: the token was sent"
+            );
+            let document: Value = serde_json::from_slice(&run.stdout)
+                .unwrap_or_else(|error| panic!("{what}: run stdout should be JSON ({error})"));
+            let run_id = document["lattice"]["runId"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{what}: the run is recorded"))
+                .to_owned();
+
+            let history = sandbox.output(&[
+                "history",
+                sandbox.ws(),
+                "--id",
+                &run_id,
+                "--bodies",
+                "--json",
+            ]);
+            assert_eq!(history.status.code(), Some(0), "{what}: history exit");
+            let row_json: Value = serde_json::from_slice(&history.stdout).unwrap();
+            let hash = row_json["run"]["request"]["body"]["hash"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{what}: the request body is a blob"))
+                .to_owned();
+            let target = sandbox.dir.path().join("request-body.out");
+            let blob = sandbox.output(&[
+                "blob",
+                &hash,
+                sandbox.ws(),
+                "--output",
+                target.to_str().unwrap(),
+                "--json",
+            ]);
+            assert_eq!(blob.status.code(), Some(0), "{what}: blob exit");
+            let stored = std::fs::read(&target).unwrap();
+            std::fs::remove_file(&target).unwrap();
+            let blob_json = sandbox.output(&["blob", &hash, sandbox.ws(), "--json"]);
+            assert_eq!(blob_json.status.code(), Some(0), "{what}: blob --json exit");
+            let sql: Vec<_> = ["SELECT * FROM runs", "SELECT * FROM blobs"]
+                .into_iter()
+                .map(|query| {
+                    let sql = sandbox.output(&["history", sandbox.ws(), "--sql", query, "--json"]);
+                    assert_eq!(sql.status.code(), Some(0), "{what}: {query}");
+                    sql
+                })
+                .collect();
+
+            if secret {
+                // Zero hits: what the commands print, the blob, and every
+                // file under the store.
+                for (place, output) in [
+                    ("run", &run),
+                    ("history --bodies", &history),
+                    ("blob", &blob_json),
+                    ("history --sql runs", &sql[0]),
+                    ("history --sql blobs", &sql[1]),
+                ] {
+                    assert_clean(&what, &format!("{place} stdout"), &output.stdout);
+                    assert_clean(&what, &format!("{place} stderr"), &output.stderr);
+                }
+                assert_clean(&what, "the blob", &stored);
+                assert!(
+                    find(&stored, body.plain).is_some(),
+                    "{what}: plain text kept"
+                );
+                assert!(
+                    find(&stored, "<redacted>").is_some(),
+                    "{what}: the token replaced"
+                );
+                sandbox.assert_store_clean(&what);
+            } else {
+                // Control: a plain row is not a known secret, so the stored
+                // body keeps it, and so does the store on disk.
+                assert!(
+                    find(&stored, body.sent).is_some(),
+                    "{what}: the plain value is stored in the blob"
+                );
+                assert!(
+                    find(&stored, "<redacted>").is_none(),
+                    "{what}: nothing redacted"
+                );
+                assert!(
+                    sandbox
+                        .store_files()
+                        .iter()
+                        .any(|(_, bytes)| find(bytes, STEM).is_some()),
+                    "{what}: the plain value is in a store file"
+                );
             }
         }
     }
