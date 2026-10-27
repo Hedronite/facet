@@ -6,6 +6,34 @@ separate version axes and do not move with this release.
 
 ## [Unreleased]
 
+### Added
+
+- A Facet-owned `facet:` key in the collection YAML turns recording off.
+  `facet: { record: never }` on the collection, or `facet: { record: false }`
+  on a request, writes no run row and no blob for `request run`, `replay`,
+  the TUI and MCP, whatever `--no-record`, `FACET_NO_RECORD` or MCP
+  `noRecord` say; the request is still sent. Flags can turn recording off,
+  never on. Inside `facet:`, an unknown key, a wrong type or an unknown
+  value fails with `facet_key_invalid` (exit 3) before anything is sent;
+  the error names the key path and never the value. Unknown YAML outside
+  `facet:` is still accepted and kept, and so is `facet:` when a command
+  rewrites the file.
+
+### Security
+
+- `request run` and `replay` output, their error envelopes and `error[...]`
+  lines, and MCP `request_run` and `run_replay` now redact what the run
+  knows is secret. Known secret values of 4 bytes or more (hydrated, passed
+  with `--var`, or a token the run sends) become `<redacted>`, exactly and
+  in their URL-encoded forms, in the request and final URL, header values,
+  bodies and error text. The values of sensitive headers such as
+  `Authorization` and `Set-Cookie`, URL userinfo, and query values that
+  match a known value are `<redacted>` too. `--dry-run` uses the same
+  redaction. There is no flag to turn it off. MCP `history_get`, `run_diff`
+  and `blob_get` return store data as stored.
+- `replay` now sends the `githubToken` it resolves from `gh`, as `request
+  run` does, and redacts it.
+
 ### Fixed
 
 - A request that carries no secret uses the normal transport again. A CLI

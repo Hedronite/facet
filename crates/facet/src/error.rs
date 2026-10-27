@@ -3,7 +3,7 @@
 //! `blob_not_found`, `run_not_found`, `session_not_found`, `session_not_set`,
 //! `invalid_sql`, and `sql_read_only`.
 
-use facet_record::{HydrateError, Redactor};
+use facet_record::{HydrateError, PolicyError, Redactor};
 use lattice::LatticeError;
 use probe_core::EnvironmentResolutionError;
 use probe_http::HttpError;
@@ -247,6 +247,17 @@ impl FacetError {
     }
 
     /// Mirrors `probe-cli`'s environment-resolution mapping.
+    /// A bad `facet:` key (exit 3, like any invalid collection). Details
+    /// name the key path only; neither part carries a value.
+    pub(crate) fn policy(error: &PolicyError) -> Self {
+        Self::new(
+            error.category(),
+            error.to_string(),
+            INVALID_WORKSPACE_EXIT_CODE,
+        )
+        .with_details(json!({ "path": error.path() }))
+    }
+
     pub(crate) fn configuration(error: EnvironmentResolutionError) -> Self {
         if matches!(
             error,

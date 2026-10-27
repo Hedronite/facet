@@ -9,6 +9,7 @@
 mod diff;
 mod github;
 mod hydrate;
+mod policy;
 pub mod redact;
 mod transport;
 
@@ -20,6 +21,7 @@ pub use diff::{
 };
 pub use github::{api_fallback, auth_token_for};
 pub use hydrate::{HydrateError, Hydration, overlay_secrets};
+pub use policy::{PolicyError, RecordPolicy, record_policy};
 pub use redact::Redactor;
 pub use transport::{http_engine_from_env, http_engine_from_kubeconfig, kube_api_base_from_env};
 
@@ -118,7 +120,8 @@ pub enum Recording {
         /// session is visible through `facet session show`).
         session_created: bool,
     },
-    /// Recording was not attempted (`disabled`, `stdin_workspace`).
+    /// Recording was not attempted (`disabled`, `stdin_workspace`,
+    /// `facet_policy`).
     Skipped(&'static str),
     /// Recording was attempted and failed; the run itself still happened.
     Failed(String),
@@ -219,6 +222,11 @@ pub struct RecordRequest<'a> {
     /// Secret values to scrub from stored text (URL, header values, error
     /// text) before the row is written. See [`Hydration::redact`].
     pub redact: &'a [String],
+    /// The Facet-owned `facet:` policy of this request, decided before
+    /// anything is sent by [`record_policy`]. When it forbids recording,
+    /// `record` writes no run row and no blob, whatever the flags,
+    /// `FACET_NO_RECORD` or MCP `noRecord` say.
+    pub policy: RecordPolicy,
 }
 
 /// Records one run in the workspace store beside the collection, then
@@ -242,7 +250,14 @@ pub fn record(req: &RecordRequest<'_>) -> Recording {
         replayed_from,
         var_names,
         redact,
+        policy,
     } = *req;
+    // An explicit `facet:` forbid outranks every flag, env and MCP switch:
+    // those turn recording off, never on. Nothing reads the store, so a
+    // forbidden run leaves neither a row nor a blob.
+    if !policy.allows_record() {
+        return Recording::Skipped("facet_policy");
+    }
     let Some(root) = root else {
         return Recording::Skipped("stdin_workspace");
     };
