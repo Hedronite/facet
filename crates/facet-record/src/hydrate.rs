@@ -20,8 +20,9 @@ use lattice::{
     LatticeConfig, LatticeError, MachineStore, SECRET_KEY_ENV, SecretConfig, WorkspaceStore,
 };
 use probe_core::{
-    Environment, EnvironmentResolutionError, HttpRequest, ResolvedEnvironment,
+    Environment, EnvironmentResolutionError, HttpRequest, ResolvedEnvironment, TransportLock,
     apply_path_parameters, discover_request_variables, resolve_environment_with_overrides,
+    transport_lock,
 };
 use serde_json::{Value, json};
 
@@ -42,9 +43,14 @@ pub struct Hydration {
     /// with `--var`), for the recorder to scrub from stored text. Never
     /// logged; only ever compared against.
     pub redact: Vec<String>,
+    /// Decided once by [`transport_lock`] from variable names only: how
+    /// this request must run transport-side. Beside `redact` so the secret
+    /// fields retire or retune together. Not part of `lattice.secrets`.
+    pub lock: TransportLock,
     /// The request references a declared secret, including one satisfied
     /// by `--var`, or secret discovery could not run. Not part of
-    /// `lattice.secrets`.
+    /// `lattice.secrets`; while run, replay and the TUI still read this
+    /// flag directly it is set from [`TransportLock::is_locked`].
     pub references_secret: bool,
 }
 
@@ -133,27 +139,28 @@ pub fn overlay_secrets(
     environments: &[Environment],
     user_overrides: &[(String, String)],
 ) -> Result<Hydration, HydrateError> {
-    // Discovery needs a selected environment. Without it, a `--var` secret
-    // would otherwise send with redirects and an env proxy. Lock, and do
-    // not put a value in the error.
+    // One decision for every return path, made from variable names only:
+    // no value enters it, and no error carries one. Store rows are keyed by
+    // environment, so without a selection only `--var` names count as
+    // supplied here.
+    let lock = transport_lock(request, environments, environment, |name| {
+        user_overrides.iter().any(|(var, _)| var == name)
+    });
     let Some(environment) = environment else {
-        return Ok(idle(Vec::new(), true));
+        return Ok(idle(Vec::new(), lock));
     };
     let Some(root) = root else {
         let Ok(referenced) = discover_request_variables(request, environments, Some(environment))
         else {
-            return Ok(idle(Vec::new(), true));
+            return Ok(idle(Vec::new(), lock));
         };
-        return Ok(idle(
-            secret_var_redact(&referenced, user_overrides),
-            referenced.iter().any(|info| info.secret),
-        ));
+        return Ok(idle(secret_var_redact(&referenced, user_overrides), lock));
     };
     // Discovery errors (unknown environment, bad inheritance) are core's to
     // report at resolve time with the right category. Lock transport anyway.
     let Ok(referenced) = discover_request_variables(request, environments, Some(environment))
     else {
-        return Ok(idle(Vec::new(), true));
+        return Ok(idle(Vec::new(), lock));
     };
     // Includes secrets satisfied by `--var`. Those still make this a
     // secret-referencing request, so a store host must not apply.
@@ -175,13 +182,13 @@ pub fn overlay_secrets(
         .filter(|info| !user_overrides.iter().any(|(name, _)| *name == info.name))
         .collect();
     if referenced.is_empty() {
-        return Ok(idle(redact, any_secret));
+        return Ok(idle(redact, lock));
     }
     let strict = referenced.iter().any(|info| info.secret);
 
     // A store beside the collection is the only way to have Lattice values.
     let Some(workspace_root) = WorkspaceStore::discover(root) else {
-        return Ok(idle(redact, any_secret));
+        return Ok(idle(redact, lock));
     };
     let opened = LatticeConfig::load(&workspace_root)
         .map_err(LatticeError::from)
@@ -189,25 +196,25 @@ pub fn overlay_secrets(
     let store = match opened {
         Ok(Some(store)) => store,
         Ok(None) => {
-            return Ok(idle(redact, any_secret));
+            return Ok(idle(redact, lock));
         }
         Err(error) if strict => return Err(HydrateError::Lattice(error)),
         Err(_) => {
-            return Ok(idle(redact, any_secret));
+            return Ok(idle(redact, lock));
         }
     };
     let machine = match MachineStore::open(store.config()) {
         Ok(machine) => machine,
         Err(error) if strict => return Err(HydrateError::Lattice(error)),
         Err(_) => {
-            return Ok(idle(redact, any_secret));
+            return Ok(idle(redact, lock));
         }
     };
     let rows = match machine.environments(store.workspace_id()) {
         Ok(rows) => rows,
         Err(error) if strict => return Err(HydrateError::Lattice(error)),
         Err(_) => {
-            return Ok(idle(redact, any_secret));
+            return Ok(idle(redact, lock));
         }
     };
 
@@ -263,7 +270,8 @@ pub fn overlay_secrets(
         }
     }
     hydration.redact = redact;
-    hydration.references_secret = any_secret;
+    hydration.lock = lock;
+    hydration.references_secret = lock.is_locked();
     hydration.source = if hydration.secrets > 0 {
         Some(backend_label)
     } else if hydration.hydrated.is_empty() {
@@ -285,10 +293,11 @@ pub fn overlay_secrets(
     Ok(hydration)
 }
 
-fn idle(redact: Vec<String>, references_secret: bool) -> Hydration {
+fn idle(redact: Vec<String>, lock: TransportLock) -> Hydration {
     Hydration {
         redact,
-        references_secret,
+        lock,
+        references_secret: lock.is_locked(),
         ..Hydration::default()
     }
 }
@@ -500,6 +509,7 @@ mod tests {
             secrets: 1,
             source: Some("encrypted"),
             redact: vec!["abc".to_owned()],
+            lock: probe_core::TransportLock::Open,
             references_secret: false,
         };
         let merged = hydration.merged(&[("token".to_owned(), "user".to_owned())]);

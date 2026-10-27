@@ -44,8 +44,8 @@ pub use request::{
     QueryParameter, RawBody, RawBodyKind, RequestBody, RequestSettings, RequestUpdate,
 };
 pub use request_resolution::{
-    RequestVariableInfo, VariableUsage, discover_request_variables, resolve_request,
-    resolve_request_strict,
+    RequestVariableInfo, TransportLock, VariableUsage, discover_request_variables, resolve_request,
+    resolve_request_strict, transport_lock,
 };
 pub use workspace::{
     FolderKey, RequestKey, Workspace, WorkspaceEditError, WorkspaceFolder, WorkspaceItemRef,

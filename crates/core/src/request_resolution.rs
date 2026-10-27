@@ -85,6 +85,70 @@ pub fn discover_request_variables(
         .collect())
 }
 
+/// Transport-locking classification for a request about to leave the
+/// process, decided from variable names only. No variable value enters the
+/// decision or an error.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TransportLock {
+    /// Discovery classified every referenced variable: with a selected
+    /// environment none is declared secret, without one none is supplied by
+    /// `--var` or a store row.
+    #[default]
+    Open,
+    /// An environment is selected and a referenced variable is declared
+    /// secret, whatever its source.
+    SecretReferenced,
+    /// No environment is selected and a referenced variable is supplied by
+    /// `--var` or a store row, so its secret status cannot be classified.
+    VarUnclassified,
+    /// Variable discovery failed, so the request cannot be classified.
+    DiscoveryFailed,
+}
+
+impl TransportLock {
+    /// Every classification except `Open` must keep locked transport.
+    #[must_use]
+    pub fn is_locked(self) -> bool {
+        !matches!(self, Self::Open)
+    }
+}
+
+/// Decides the transport lock for `request` from variable names only.
+///
+/// Discovery failure is its own locked branch: the request cannot be
+/// classified, so it locks. With a selected environment the effective
+/// declared-secret declarations decide; without one, every reference that
+/// `supplied` reports as coming from `--var` or a store row locks as
+/// unclassified.
+pub fn transport_lock(
+    request: &HttpRequest,
+    environments: &[Environment],
+    selected: Option<&str>,
+    supplied: impl Fn(&str) -> bool,
+) -> TransportLock {
+    let Ok(referenced) = discover_request_variables(request, environments, selected) else {
+        return TransportLock::DiscoveryFailed;
+    };
+    match selected {
+        Some(_) => {
+            let any_secret = referenced.iter().any(|info| info.secret);
+            if any_secret {
+                TransportLock::SecretReferenced
+            } else {
+                TransportLock::Open
+            }
+        }
+        None => {
+            let any_supplied = referenced.iter().any(|info| supplied(&info.name));
+            if any_supplied {
+                TransportLock::VarUnclassified
+            } else {
+                TransportLock::Open
+            }
+        }
+    }
+}
+
 /// Clones a request and interpolates every currently supported request-value field.
 pub fn resolve_request(
     request: &HttpRequest,
