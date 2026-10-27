@@ -18,15 +18,14 @@
 //! Every value below is a canary, not a credential, and no assertion message
 //! prints one.
 
+mod common;
+
 use std::{
     io::{Read, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{
-        OnceLock,
-        mpsc::{self, Receiver},
-    },
+    sync::mpsc::{self, Receiver},
     thread,
     time::Duration,
 };
@@ -54,56 +53,6 @@ const PROXY_VARS: [&str; 6] = [
 const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
       Content-Length: 2\r\nConnection: close\r\n\r\n{}";
 
-/// `bin` from `package`, built from this workspace into the target dir and
-/// profile running this test. `cargo build` is a no-op when it is fresh and
-/// rebuilds when the predicate or a call site changed, so it is never stale.
-fn build(package: &str, bin: &str) -> PathBuf {
-    let exe = std::env::current_exe().expect("test executable path");
-    // <target>/[<triple>/]<profile>/deps/transport_lock-<hash>
-    let profile_dir = exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("profile directory");
-    let profile = profile_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .expect("profile name");
-    let mut command = Command::new(env!("CARGO"));
-    command
-        .args(["build", "--locked", "-p", package, "--bin", bin])
-        .args(["--message-format", "json-render-diagnostics"])
-        .args([
-            "--profile",
-            if profile == "debug" { "dev" } else { profile },
-        ])
-        .current_dir(env!("CARGO_MANIFEST_DIR"));
-    let parent = profile_dir.parent().expect("target directory");
-    if parent.join("CACHEDIR.TAG").exists() {
-        command.arg("--target-dir").arg(parent);
-    } else {
-        let triple = parent.file_name().expect("target triple");
-        command
-            .arg("--target-dir")
-            .arg(parent.parent().expect("target directory"))
-            .arg("--target")
-            .arg(triple);
-    }
-    let output = command.output().expect("cargo should run");
-    assert!(
-        output.status.success(),
-        "cargo build -p {package} failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|message| {
-            message["reason"] == "compiler-artifact" && message["target"]["name"] == bin
-        })
-        .find_map(|message| message["executable"].as_str().map(PathBuf::from))
-        .unwrap_or_else(|| panic!("cargo should report the {bin} executable"))
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Bin {
     Facet,
@@ -112,12 +61,10 @@ enum Bin {
 
 impl Bin {
     fn path(self) -> &'static Path {
-        static FACET: OnceLock<PathBuf> = OnceLock::new();
-        static PROBE: OnceLock<PathBuf> = OnceLock::new();
-        match self {
-            Self::Facet => FACET.get_or_init(|| build("facet-cli", "facet")),
-            Self::Probe => PROBE.get_or_init(|| build("probe-cli", "probe")),
-        }
+        common::bins::shipped(match self {
+            Self::Facet => "facet",
+            Self::Probe => "probe",
+        })
     }
 }
 

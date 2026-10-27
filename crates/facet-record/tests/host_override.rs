@@ -13,15 +13,14 @@
 //! transport (no redirects, no env proxy) even where hydration returns early:
 //! no workspace, no `--environment`, or failed environment discovery.
 
+mod common;
+
 use std::{
     io::{Read, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{
-        OnceLock,
-        mpsc::{self, Receiver},
-    },
+    sync::mpsc::{self, Receiver},
     thread,
     time::Duration,
 };
@@ -47,59 +46,6 @@ const PROXY_VARS: [&str; 6] = [
 ];
 const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
       Content-Length: 2\r\nConnection: close\r\n\r\n{}";
-
-/// `facet` built from this workspace into the target dir and profile running
-/// this test. `cargo build` is a no-op when it is fresh and rebuilds when
-/// `hydrate.rs` or `error.rs` changed, so the binary is never stale.
-fn facet_bin() -> &'static Path {
-    static BIN: OnceLock<PathBuf> = OnceLock::new();
-    BIN.get_or_init(|| {
-        let exe = std::env::current_exe().expect("test executable path");
-        // <target>/[<triple>/]<profile>/deps/host_override-<hash>
-        let profile_dir = exe
-            .parent()
-            .and_then(Path::parent)
-            .expect("profile directory");
-        let profile = profile_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .expect("profile name");
-        let mut command = Command::new(env!("CARGO"));
-        command
-            .args(["build", "--locked", "-p", "facet-cli", "--bin", "facet"])
-            .args(["--message-format", "json-render-diagnostics"])
-            .args([
-                "--profile",
-                if profile == "debug" { "dev" } else { profile },
-            ])
-            .current_dir(env!("CARGO_MANIFEST_DIR"));
-        let parent = profile_dir.parent().expect("target directory");
-        if parent.join("CACHEDIR.TAG").exists() {
-            command.arg("--target-dir").arg(parent);
-        } else {
-            let triple = parent.file_name().expect("target triple");
-            command
-                .arg("--target-dir")
-                .arg(parent.parent().expect("target directory"))
-                .arg("--target")
-                .arg(triple);
-        }
-        let output = command.output().expect("cargo should run");
-        assert!(
-            output.status.success(),
-            "cargo build -p facet-cli failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .filter(|message| {
-                message["reason"] == "compiler-artifact" && message["target"]["name"] == "facet"
-            })
-            .find_map(|message| message["executable"].as_str().map(PathBuf::from))
-            .expect("cargo should report the facet executable")
-    })
-}
 
 /// A loopback HTTP host. Each request it receives is answered `200 {}` and
 /// its head is sent to `requests`, so a test can prove a hit or its absence.
@@ -245,7 +191,7 @@ impl Sandbox {
 
     fn facet(&self) -> Command {
         let root = self.dir.path();
-        let mut command = Command::new(facet_bin());
+        let mut command = Command::new(common::bins::shipped("facet"));
         command
             .env("FACET_DATA_DIR", root.join("machine"))
             .env("FACET_CONFIG_DIR", root.join("config"))
