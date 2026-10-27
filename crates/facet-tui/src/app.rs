@@ -3785,6 +3785,39 @@ fn build_update(method: &str, editor: &Editor) -> RequestUpdate {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A temp dir name no other test in this process can share. `cargo
+    /// test` runs every test as a thread of one process, and the macOS clock
+    /// ticks in microseconds, so pid and time alone collide; the counter
+    /// does not.
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    /// Asserts `collection` is mounted. A failed load keeps the old root and
+    /// puts its reason in the status, so the failure message carries it.
+    #[track_caller]
+    fn assert_mounted(app: &App, collection: &Path) {
+        let mounted = app
+            .workspace_root()
+            .and_then(|root| root.canonicalize().ok());
+        let expected = collection.parent().and_then(|dir| dir.canonicalize().ok());
+        assert!(
+            mounted.is_some() && mounted == expected,
+            "mounted {mounted:?}, expected {expected:?}; status {:?}",
+            app.status
+        );
+    }
 
     fn fixture() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -4445,14 +4478,7 @@ mod tests {
     /// Temp collection dir with a Lattice store holding two runs; the
     /// first has an inline response body for the hydrate path.
     async fn app_with_store() -> (std::path::PathBuf, App) {
-        let dir = std::env::temp_dir().join(format!(
-            "facet-tui-s2-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = unique_temp_dir("facet-tui-s2");
         std::fs::create_dir_all(&dir).unwrap();
         let yaml = dir.join("collection.yml");
         std::fs::copy(fixture(), &yaml).unwrap();
@@ -4488,19 +4514,17 @@ mod tests {
             .unwrap();
         drop(store);
         let app = App::load(Some(&yaml)).await;
+        assert!(
+            app.loaded.is_some(),
+            "store fixture loads; status {:?}",
+            app.status
+        );
         (dir, app)
     }
 
     /// Two collections in separate directories, each with its own store.
     async fn two_collections() -> (PathBuf, PathBuf, PathBuf, App) {
-        let base = std::env::temp_dir().join(format!(
-            "facet-tui-open-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let base = unique_temp_dir("facet-tui-open");
         let first = base.join("alpha");
         let second = base.join("beta");
         std::fs::create_dir_all(&first).unwrap();
@@ -4530,6 +4554,11 @@ mod tests {
         WorkspaceStore::open(&second, LatticeConfig::default()).unwrap();
 
         let mut app = App::load(Some(&first_yaml)).await;
+        assert!(
+            app.loaded.is_some(),
+            "first collection loads; status {:?}",
+            app.status
+        );
         app.preview_machine_dir(base.join("machine"));
         (base, first_yaml, second_yaml, app)
     }
@@ -4542,11 +4571,8 @@ mod tests {
         app.execute_command().await.unwrap();
 
         assert!(!app.should_quit, ":open must not quit the TUI");
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-            "the workspace root follows the newly opened collection"
-        );
+        // The workspace root follows the newly opened collection.
+        assert_mounted(&app, &second);
         assert!(app.has_collection());
         std::fs::remove_dir_all(&base).ok();
     }
@@ -4638,10 +4664,7 @@ mod tests {
             .unwrap();
 
         assert!(app.open_picker().is_none(), "Enter closes the picker");
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-        );
+        assert_mounted(&app, &second);
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -4709,11 +4732,12 @@ mod tests {
             .await
             .unwrap();
         assert!(app.open_confirm().is_none());
-        assert!(!app.editor_dirty, "remount resets the dirty flag");
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
+        assert!(
+            !app.editor_dirty,
+            "remount resets the dirty flag; status {:?}",
+            app.status
         );
+        assert_mounted(&app, &second);
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -4800,10 +4824,7 @@ mod tests {
 
         app.open_path(&second);
 
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-        );
+        assert_mounted(&app, &second);
         assert!(
             !app.is_in_flight(),
             "remount drops both channels (pending={}, cancel={})",
@@ -4860,11 +4881,8 @@ mod tests {
 
         app.command = format!("open {}", second.display());
         app.execute_command().await.unwrap();
-        assert_eq!(
-            app.workspace_root().unwrap().canonicalize().unwrap(),
-            second.parent().unwrap().canonicalize().unwrap(),
-            "the switch goes through once nothing is in flight"
-        );
+        // The switch goes through once nothing is in flight.
+        assert_mounted(&app, &second);
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -5268,14 +5286,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_lock_keeps_secret_send_locked() {
-        let dir = std::env::temp_dir().join(format!(
-            "facet-tui-lock-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = unique_temp_dir("facet-tui-lock");
         std::fs::create_dir_all(&dir).unwrap();
         let yaml = dir.join("collection.yml");
         std::fs::copy(
@@ -5311,14 +5322,7 @@ mod tests {
     /// allowed run would record, and one request to `url` carrying
     /// `item_facet` as its item-level YAML.
     async fn app_with_policy(tag: &str, url: &str, item_facet: &str) -> (PathBuf, App) {
-        let dir = std::env::temp_dir().join(format!(
-            "facet-tui-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let dir = unique_temp_dir(&format!("facet-tui-{tag}"));
         std::fs::create_dir_all(&dir).unwrap();
         let yaml = dir.join("collection.yml");
         std::fs::write(
@@ -5336,7 +5340,11 @@ mod tests {
         .unwrap();
         drop(WorkspaceStore::open(&dir, LatticeConfig::default()).unwrap());
         let app = App::load(Some(&yaml)).await;
-        assert!(app.selected_request().is_some(), "collection loads");
+        assert!(
+            app.selected_request().is_some(),
+            "collection loads; status {:?}",
+            app.status
+        );
         (dir, app)
     }
 
