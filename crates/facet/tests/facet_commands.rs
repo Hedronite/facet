@@ -1090,6 +1090,61 @@ fn assert_no_secret_anywhere(sandbox: &Sandbox, ws: &str) {
     }
 }
 
+/// The stored request-body blob of a secret request: the hydrated value is
+/// `<redacted>` at write, the rest of the body is kept, and the blob is
+/// addressed by the hash of the scrubbed bytes. Pinned as a golden beside
+/// `blob_request.json`, whose plain body is stored unchanged.
+#[test]
+fn secret_request_body_blob_is_scrubbed_at_write() {
+    let sandbox = Sandbox::new();
+    let (url, server) = serve_once(ECHO_BODY.to_vec(), "application/json");
+    let workspace = sandbox.secret_workspace(&url);
+    let ws = workspace.to_str().unwrap();
+    sandbox.run_json(&[
+        "env",
+        "set",
+        ws,
+        "--environment",
+        "local",
+        "--name",
+        "token",
+        "--value",
+        SECRET_VALUE,
+        "--secret",
+    ]);
+    let run = sandbox.run_json(&[
+        "request",
+        "run",
+        ws,
+        "items/0",
+        "--environment",
+        "local",
+        "--inline-body-max",
+        "0",
+    ]);
+    assert_eq!(
+        String::from_utf8(server.join().unwrap()).unwrap(),
+        format!(r#"{{"token":"{SECRET_VALUE}"}}"#),
+        "the raw body is sent"
+    );
+    let run_id = run["lattice"]["runId"].as_str().unwrap();
+    let row = sandbox.run_json(&["history", ws, "--id", run_id]);
+    let hash = row["run"]["request"]["body"]["hash"]
+        .as_str()
+        .expect("request body blob")
+        .to_owned();
+    let stored = fs::read(sandbox.root().join(".facet/blobs").join(&hash)).unwrap();
+    assert_eq!(stored, br#"{"token":"<redacted>"}"#);
+    assert_eq!(
+        lattice::sha256_hex(&stored),
+        hash,
+        "addressed by stored bytes"
+    );
+    let blob = sandbox.run_json(&["blob", &hash, ws]);
+    assert_golden("blob_request_scrubbed.json", &normalize(blob));
+    assert_no_secret_anywhere(&sandbox, ws);
+}
+
 #[test]
 fn secret_hydration_overlays_lattice_values_before_resolve() {
     let sandbox = Sandbox::new();

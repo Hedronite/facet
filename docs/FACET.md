@@ -124,7 +124,13 @@ revision"; a replay copies the source's user tags but recomputes auto-tags.
 Redaction: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`,
 `X-Api-Key`, `X-Auth-Token`, `Api-Key`, and `X-Amz-Security-Token` values are
 stored as `<redacted>`. URL userinfo (`user:pass@`) is redacted. Request bodies
-are stored as sent; do not put secrets in bodies you want recorded.
+are scrubbed of known secrets at write: every value the run knows is secret
+(hydrated, passed with `--var`, or a token it sends), exactly and in its
+URL-encoded forms, becomes `<redacted>` in the stored body, inline or blob.
+The row's request body hash is the hash of those stored bytes; `requestHash`
+still hashes the raw body, so `replay --frozen` matching is unchanged. A
+value Facet does not know is secret is stored as sent. Response bodies are
+stored as received.
 
 The machine store gets one pointer row per run (best effort; `indexed: false`
 in the output means the run is recorded but not indexed).
@@ -677,8 +683,8 @@ There is no field for the value and there never will be. **Never in
 values, `--var` values for declared secrets, `FACET_SECRET_KEY`, or `kr:` /
 `enc:v1:` references. Facet knows the values of declared secrets at record
 time (hydrated or passed with `--var`), so it scrubs them from the stored
-URL, request and response header values, and transport error text before
-the row is written (`<redacted>`; values shorter than 4 bytes are left
+URL, request and response header values, request bodies, and transport
+error text before the row is written (`<redacted>`; values shorter than 4 bytes are left
 alone). The live `request run` and `replay` documents show what was
 sent, with secrets and sensitive headers redacted: the same known values
 (plus any token the run sends, such as `githubToken` from `gh`) and their
@@ -690,9 +696,10 @@ headers (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`,
 `<redacted>`. `--dry-run` previews through the same redaction. There is no
 flag to reveal them.
 `--sql` opens the workspace store only; the machine store (where
-`environments` lives) is never attached. Request bodies remain content-
-addressed blobs that may hold what the YAML put there; `facet blob` is the
-one place a human knowingly opens one.
+`environments` lives) is never attached. Request bodies are scrubbed of
+known secrets at write, like the other stored text; response bodies are
+stored as received and may hold what the server sent. `facet blob` is the
+one place a human knowingly opens a body.
 
 ### `doctor`
 
@@ -811,7 +818,8 @@ miss) is also `isError: true`. There are no MCP-only fields.
 `request_run` and `run_replay` return the same redacted document as the CLI.
 `history_get`, `run_diff` and `blob_get` return store data unchanged: they
 are store-equivalent, showing exactly what Lattice holds, which was
-redacted when the run was recorded (request bodies excepted; see above).
+redacted when the run was recorded (response bodies are stored as
+received; see above).
 
 | Tool | Arguments | Same as |
 | --- | --- | --- |

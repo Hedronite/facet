@@ -1,0 +1,15 @@
+{
+  "blob": {
+    "body": {
+      "content": "{\"token\":\"<redacted>\"}",
+      "encoding": "utf8",
+      "omissionReason": null,
+      "omitted": false,
+      "outputPath": null
+    },
+    "contentType": null,
+    "hash": "<sha256>",
+    "sizeBytes": 22
+  },
+  "schemaVersion": 1
+}
