@@ -1135,8 +1135,8 @@ fn secret_hydration_overlays_lattice_values_before_resolve() {
     assert_eq!(sent, format!(r#"{{"token":"{SECRET_VALUE}"}}"#));
     assert_eq!(hydrated["lattice"]["secrets"]["hydrated"], json!(["token"]));
     assert_eq!(hydrated["lattice"]["secrets"]["source"], "encrypted");
-    // The live document shows what was sent (upstream shape); Lattice's
-    // part of it carries names only.
+    // The live document shows what was sent, with secrets and sensitive
+    // headers redacted; Lattice's part of it carries names only.
     assert!(!hydrated["lattice"].to_string().contains(SECRET_VALUE));
     assert_golden("run_hydrated.json", &normalize(hydrated.clone()));
     let run_id = hydrated["lattice"]["runId"].as_str().unwrap().to_owned();

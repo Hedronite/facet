@@ -646,7 +646,16 @@ values, `--var` values for declared secrets, `FACET_SECRET_KEY`, or `kr:` /
 time (hydrated or passed with `--var`), so it scrubs them from the stored
 URL, request and response header values, and transport error text before
 the row is written (`<redacted>`; values shorter than 4 bytes are left
-alone). The live `request run` document still shows what was sent.
+alone). The live `request run` and `replay` documents show what was
+sent, with secrets and sensitive headers redacted: the same known values
+(plus any token the run sends, such as `githubToken` from `gh`) and their
+URL-encoded forms become `<redacted>` in the request and final URL, every
+header value and body, error envelopes and `error[...]` lines, human and
+`--json` alike; URL userinfo is stripped; and the values of the sensitive
+headers (`Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`,
+`X-Api-Key`, `X-Auth-Token`, `Api-Key`, `X-Amz-Security-Token`) are always
+`<redacted>`. `--dry-run` previews through the same redaction. There is no
+flag to reveal them.
 `--sql` opens the workspace store only; the machine store (where
 `environments` lives) is never attached. Request bodies remain content-
 addressed blobs that may hold what the YAML put there; `facet blob` is the
@@ -766,6 +775,10 @@ prints, delivered as `structuredContent` (and as pretty text in `content`).
 Errors are the same `error.{category, exitCode, message, details}` envelope
 with `isError: true`; a success document that carries `error` (an `--expect`
 miss) is also `isError: true`. There are no MCP-only fields.
+`request_run` and `run_replay` return the same redacted document as the CLI.
+`history_get`, `run_diff` and `blob_get` return store data unchanged: they
+are store-equivalent, showing exactly what Lattice holds, which was
+redacted when the run was recorded (request bodies excepted; see above).
 
 | Tool | Arguments | Same as |
 | --- | --- | --- |

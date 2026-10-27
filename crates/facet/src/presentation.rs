@@ -1,9 +1,13 @@
-//! Response rendering. `response_human` and `response_json` reproduce
-//! `probe-cli`'s presentation byte for byte so `facet request run` keeps the
-//! upstream contract; Facet only appends its `lattice` field afterwards.
+//! Response rendering. `response_human` and `response_json` keep
+//! `probe-cli`'s presentation shape so `facet request run` keeps the
+//! upstream contract; Facet appends its `lattice` field afterwards. Both
+//! show the request and final URL through [`Redactor::url`] and each
+//! response header through [`Redactor::header`]; the caller runs the
+//! known-values pass over the whole document.
 
 use std::path::Path;
 
+use facet_record::Redactor;
 use probe_core::HttpRequest;
 use probe_http::{HttpResponse, MAX_IN_MEMORY_RESPONSE_BYTES};
 use serde_json::{Value, json};
@@ -12,22 +16,30 @@ pub(crate) fn response_human(
     request: &HttpRequest,
     response: &HttpResponse,
     output: Option<&Path>,
+    redactor: &Redactor,
 ) -> String {
     let method = request.method.as_deref().unwrap_or("<unset>");
-    let url = request.url.as_deref().unwrap_or("<unset>");
+    let url = request
+        .url
+        .as_deref()
+        .map_or_else(|| "<unset>".to_owned(), |url| redactor.url(url));
     let mut rendered = format!(
         "{method} {url}\n\n{} {}\n{} ms\n{}\nFinal URL: {}\nHeaders:\n",
         response.status,
         response.reason,
         response.duration.as_millis(),
         human_size(response.size),
-        response.url,
+        redactor.url(response.url.as_str()),
     );
     if response.headers.is_empty() {
         rendered.push_str("  (none)\n");
     } else {
         for header in &response.headers {
-            rendered.push_str(&format!("  {}: {}\n", header.name, header.value));
+            rendered.push_str(&format!(
+                "  {}: {}\n",
+                header.name,
+                redactor.header(&header.name, &header.value)
+            ));
         }
     }
     rendered.push('\n');
@@ -53,6 +65,7 @@ pub(crate) fn response_json(
     request: &HttpRequest,
     response: &HttpResponse,
     output: Option<&Path>,
+    redactor: &Redactor,
 ) -> Value {
     let output_path = output.map(|path| path.to_string_lossy().into_owned());
     let (content, encoding, omitted, omission_reason) = if output.is_some() {
@@ -67,7 +80,7 @@ pub(crate) fn response_json(
     json!({
         "request": {
             "method": request.method,
-            "url": request.url,
+            "url": request.url.as_deref().map(|url| redactor.url(url)),
         },
         "response": {
             "body": {
@@ -80,12 +93,12 @@ pub(crate) fn response_json(
             "durationMs": response.duration.as_millis(),
             "headers": response.headers.iter().map(|header| json!({
                 "name": header.name,
-                "value": header.value,
+                "value": redactor.header(&header.name, &header.value),
             })).collect::<Vec<_>>(),
             "reason": response.reason,
             "sizeBytes": response.size,
             "status": response.status,
-            "url": response.url,
+            "url": redactor.url(response.url.as_str()),
         }
     })
 }

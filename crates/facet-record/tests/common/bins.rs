@@ -1,11 +1,16 @@
 //! The shipped `facet` and `probe` binaries for tests that drive them.
 //!
 //! Every test process asks for them, and nextest runs each test in its own
-//! process. `cargo build` re-links `target/<profile>/<bin>` on every call,
-//! fresh or not, so a process spawning that path while another builds can
-//! see it missing. Instead each process takes a lock in the target dir, runs
-//! the one build invocation below, and copies each binary to a path named
-//! for its contents. Tests spawn the copy, which no build touches.
+//! process. `cargo build` re-links `<target-dir>/<profile>/<bin>` on every
+//! call, fresh or not, so a process spawning that path while another builds
+//! can see it missing. Two rules keep every spawn safe:
+//!
+//! - The build uses its own target dir, `<target>/facet-record-shipped/target`,
+//!   so it never re-links `target/<profile>/facet` or `probe`, which the
+//!   `facet-cli` and `probe-cli` tests spawn as `CARGO_BIN_EXE_*`.
+//! - Each process takes a lock, runs the one build invocation below, and
+//!   copies each binary to a path named for its contents. Tests spawn the
+//!   copy, which no build touches.
 
 use std::{
     fs::{self, File},
@@ -17,8 +22,8 @@ use std::{
 
 use serde_json::Value;
 
-/// `facet` or `probe`, built from this workspace into the target dir and
-/// profile running this test. The build is a no-op when fresh and rebuilds
+/// `facet` or `probe`, built from this workspace with the profile running
+/// this test. The build is a no-op when fresh and rebuilds
 /// when a source changed, so the binary is never stale.
 pub fn shipped(bin: &str) -> &'static Path {
     static BINS: OnceLock<[PathBuf; 2]> = OnceLock::new();
@@ -41,7 +46,17 @@ fn build() -> [PathBuf; 2] {
         .file_name()
         .and_then(|name| name.to_str())
         .expect("profile name");
-    let copies = profile_dir.join("facet-record-shipped");
+    let parent = profile_dir.parent().expect("target directory");
+    let (target, triple) = if parent.join("CACHEDIR.TAG").exists() {
+        (parent, None)
+    } else {
+        (
+            parent.parent().expect("target directory"),
+            Some(parent.file_name().expect("target triple")),
+        )
+    };
+    let shipped = target.join("facet-record-shipped");
+    let copies = shipped.join(profile).join("bins");
     fs::create_dir_all(&copies).expect("shipped binary directory");
     // Held until this function returns: one build and copy at a time.
     let lock = File::create(copies.join(".lock")).expect("lock file");
@@ -57,17 +72,11 @@ fn build() -> [PathBuf; 2] {
             "--profile",
             if profile == "debug" { "dev" } else { profile },
         ])
+        .arg("--target-dir")
+        .arg(shipped.join("target"))
         .current_dir(env!("CARGO_MANIFEST_DIR"));
-    let parent = profile_dir.parent().expect("target directory");
-    if parent.join("CACHEDIR.TAG").exists() {
-        command.arg("--target-dir").arg(parent);
-    } else {
-        let triple = parent.file_name().expect("target triple");
-        command
-            .arg("--target-dir")
-            .arg(parent.parent().expect("target directory"))
-            .arg("--target")
-            .arg(triple);
+    if let Some(triple) = triple {
+        command.arg("--target").arg(triple);
     }
     let output = command.output().expect("cargo should run");
     assert!(

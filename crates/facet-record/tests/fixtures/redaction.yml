@@ -1,0 +1,67 @@
+opencollection: 1.0.0
+info:
+  name: Redaction fixture
+bundled: true
+config:
+  environments:
+    - name: local
+      variables:
+        - secret: true
+          name: token
+          type: string
+        - secret: true
+          name: pass
+          type: string
+items:
+  - info:
+      name: Echo secret
+      type: http
+      seq: 1
+    http:
+      method: POST
+      url: "__COLLECTION_URL__/echo?t={{token}}&plain=plain-query-value"
+      headers:
+        - name: X-Token
+          value: "{{token}}"
+        - name: X-Plain-Request
+          value: plain-request-header
+      body:
+        type: json
+        data: '{"token":"{{token}}","note":"plain-request-body"}'
+  - info:
+      name: Unreachable with a secret query
+      type: http
+      seq: 2
+    http:
+      method: GET
+      url: "http://127.0.0.1:9/down?t={{token}}"
+      headers:
+        - name: X-Token
+          value: "{{token}}"
+  - info:
+      name: Unreachable with secret userinfo
+      type: http
+      seq: 3
+    http:
+      method: GET
+      url: "http://g2-user:{{pass}}@127.0.0.1:9/down"
+  - info:
+      name: GitHub token
+      type: http
+      seq: 4
+    http:
+      method: GET
+      url: "__COLLECTION_URL__/gh"
+      headers:
+        - name: Authorization
+          value: "Bearer {{githubToken}}"
+  - info:
+      name: Plain
+      type: http
+      seq: 5
+    http:
+      method: GET
+      url: "__COLLECTION_URL__/plain"
+      headers:
+        - name: X-Plain-Request
+          value: plain-request-header

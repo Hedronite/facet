@@ -7,12 +7,15 @@
 //! may hold secrets. `--frozen` is refuse-on-change only: when the resolved
 //! request hashes differently from the recorded row, exit 1 with no network
 //! and no Lattice row.
+//!
+//! Like `request run`, everything replay prints goes through one
+//! [`Redactor`], whose known values include the token replay sends.
 
 use std::io::Read;
 
 use facet_record::{
-    RecordRequest, Recording, actor_from_env, record, recording_disabled, request_hash_of,
-    session_from_env,
+    RecordRequest, Recording, Redactor, actor_from_env, record, recording_disabled,
+    request_hash_of, session_from_env,
 };
 use lattice::{MachineStore, WorkspaceStore};
 use serde_json::json;
@@ -21,8 +24,8 @@ use crate::{
     CommandOutput, FacetError, args,
     expect::{EXPECT_FAIL_TAG, Expectation},
     run::{
-        execute, execute_locked, hydrate, lookup_request, parse_vars, render, resolve_selected,
-        var_names, with_secrets,
+        add_auth_token, execute, execute_locked, hydrate, lookup_request, parse_vars, render,
+        resolve_selected, var_names, with_secrets,
     },
     workspace::{WorkspaceInput, load, open_store, overrides_from_parsed},
 };
@@ -38,6 +41,20 @@ const VALUE_FLAGS: &[&str] = &[
 const SWITCH_FLAGS: &[&str] = &["--frozen", "--strict-variables", "--no-record"];
 
 pub(crate) fn replay(args: &[String], stdin: &mut impl Read) -> Result<CommandOutput, FacetError> {
+    let mut redactor = Redactor::default();
+    match replay_unredacted(args, stdin, &mut redactor) {
+        Ok(output) => Ok(output.redact(&redactor)),
+        Err(error) => Err(error.redact(&redactor)),
+    }
+}
+
+/// `replay` before redaction. Fills `redactor` once the run knows its secret
+/// values.
+fn replay_unredacted(
+    args: &[String],
+    stdin: &mut impl Read,
+    redactor: &mut Redactor,
+) -> Result<CommandOutput, FacetError> {
     let parsed = args::parse(args, VALUE_FLAGS, SWITCH_FLAGS)?;
     let (run_id, path) = match parsed.positionals() {
         [run_id] => (run_id.as_str(), "."),
@@ -111,18 +128,21 @@ pub(crate) fn replay(args: &[String], stdin: &mut impl Read) -> Result<CommandOu
     let loaded = load(&input, stdin)?;
     let raw = lookup_request(&loaded, selector)
         .map_err(|error| error.with_details(json!({ "replayedFrom": row.id })))?;
-    let hydration = hydrate(
+    let mut hydration = hydrate(
         Some(&base),
         environment.as_deref(),
         raw,
         &loaded,
         &variables,
     )?;
+    let mut merged_variables = hydration.merged(&variables);
+    add_auth_token(raw, &mut hydration, &mut merged_variables);
+    *redactor = Redactor::new(hydration.redact.iter().cloned());
     let request = resolve_selected(
         &loaded,
         raw,
         environment.as_deref(),
-        &hydration.merged(&variables),
+        &merged_variables,
         strict_variables,
     )
     .map_err(|error| error.with_details(json!({ "replayedFrom": row.id })))?;
@@ -211,6 +231,7 @@ pub(crate) fn replay(args: &[String], stdin: &mut impl Read) -> Result<CommandOu
         lattice_json,
         lattice_human,
         warnings,
+        redactor,
     )?;
     Ok(match miss {
         Some(error) => rendered.fail(error),

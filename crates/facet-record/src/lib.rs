@@ -9,6 +9,7 @@
 mod diff;
 mod github;
 mod hydrate;
+pub mod redact;
 mod transport;
 
 use std::path::Path;
@@ -19,6 +20,7 @@ pub use diff::{
 };
 pub use github::{api_fallback, auth_token_for};
 pub use hydrate::{HydrateError, Hydration, overlay_secrets};
+pub use redact::Redactor;
 pub use transport::{http_engine_from_env, http_engine_from_kubeconfig, kube_api_base_from_env};
 
 use lattice::{
@@ -251,17 +253,16 @@ pub fn record(req: &RecordRequest<'_>) -> Recording {
 
     let req_body_bytes = request_body_bytes(request);
     let request_hash = request_hash(request, req_body_bytes.as_deref());
-    let req_headers = scrub(&request_headers_json(&request.headers).to_string(), redact);
+    let redactor = Redactor::new(redact.iter().cloned());
+    let req_headers = request_headers_json(&request.headers, &redactor).to_string();
     let error_text = result
         .as_ref()
         .err()
-        .map(|error| scrub(&error.to_string(), redact));
-    let res_headers = result.as_ref().ok().map(|response| {
-        scrub(
-            &response_headers_json(&response.headers).to_string(),
-            redact,
-        )
-    });
+        .map(|error| redactor.text(&error.to_string()).into_owned());
+    let res_headers = result
+        .as_ref()
+        .ok()
+        .map(|response| response_headers_json(&response.headers, &redactor).to_string());
     let content_type = result.as_ref().ok().and_then(|response| {
         response
             .headers
@@ -282,7 +283,7 @@ pub fn record(req: &RecordRequest<'_>) -> Recording {
     } else {
         Some(json!(all_tags).to_string())
     };
-    let redacted_url = scrub(&redact_url(request.url.as_deref().unwrap_or("")), redact);
+    let redacted_url = redactor.url(request.url.as_deref().unwrap_or(""));
     // Always written post-0003 so `[]` (none) stays distinct from NULL (unknown).
     let var_names_json = json!(var_names).to_string();
 
@@ -422,6 +423,7 @@ fn url_encode(value: &str) -> String {
 #[must_use]
 pub fn request_preview_json(request: &HttpRequest, redact: &[String]) -> Value {
     const MAX_PREVIEW_BODY: usize = 64 * 1024;
+    let redactor = Redactor::new(redact.iter().cloned());
     let body = request_body_bytes(request);
     let body_json = match body.as_deref() {
         None => {
@@ -432,18 +434,16 @@ pub fn request_preview_json(request: &HttpRequest, redact: &[String]) -> Value {
         }),
         Some(bytes) => match std::str::from_utf8(bytes) {
             Ok(text) => json!({
-                "content": scrub(text, redact), "sizeBytes": bytes.len(), "omitted": false, "omissionReason": Value::Null,
+                "content": redactor.text(text), "sizeBytes": bytes.len(), "omitted": false, "omissionReason": Value::Null,
             }),
             Err(_) => json!({
                 "content": Value::Null, "sizeBytes": bytes.len(), "omitted": true, "omissionReason": "binary",
             }),
         },
     };
-    let headers: Value = serde_json::from_str(&scrub(
-        &request_headers_json(&request.headers).to_string(),
-        redact,
-    ))
-    .unwrap_or(Value::Null);
+    let headers: Value =
+        serde_json::from_str(&request_headers_json(&request.headers, &redactor).to_string())
+            .unwrap_or(Value::Null);
     let query: Vec<Value> = request
         .query_parameters
         .iter()
@@ -451,13 +451,13 @@ pub fn request_preview_json(request: &HttpRequest, redact: &[String]) -> Value {
             json!({
                 "disabled": parameter.disabled,
                 "name": parameter.name,
-                "value": scrub(&parameter.value, redact),
+                "value": redactor.text(&parameter.value),
             })
         })
         .collect();
     json!({
         "method": request.method,
-        "url": scrub(&redact_url(request.url.as_deref().unwrap_or("")), redact),
+        "url": redactor.url(request.url.as_deref().unwrap_or("")),
         "query": query,
         "headers": headers,
         "body": body_json,
@@ -489,35 +489,29 @@ fn request_hash(request: &HttpRequest, body: Option<&[u8]>) -> String {
     sha256_hex(canonical.to_string().as_bytes())
 }
 
-fn is_sensitive(name: &str) -> bool {
-    SENSITIVE_HEADERS
-        .iter()
-        .any(|sensitive| name.eq_ignore_ascii_case(sensitive))
-}
-
-fn request_headers_json(headers: &[Header]) -> Value {
+fn request_headers_json(headers: &[Header], redactor: &Redactor) -> Value {
     Value::Array(
         headers
             .iter()
             .map(|header| {
                 json!({
                     "disabled": header.disabled,
-                    "name": header.name,
-                    "value": if is_sensitive(&header.name) { REDACTED } else { header.value.as_str() },
+                    "name": redactor.text(&header.name),
+                    "value": redactor.header(&header.name, &header.value),
                 })
             })
             .collect(),
     )
 }
 
-fn response_headers_json(headers: &[ResponseHeader]) -> Value {
+fn response_headers_json(headers: &[ResponseHeader], redactor: &Redactor) -> Value {
     Value::Array(
         headers
             .iter()
             .map(|header| {
                 json!({
-                    "name": header.name,
-                    "value": if is_sensitive(&header.name) { REDACTED } else { header.value.as_str() },
+                    "name": redactor.text(&header.name),
+                    "value": redactor.header(&header.name, &header.value),
                 })
             })
             .collect(),
@@ -575,47 +569,24 @@ pub fn git_tag(dir: &Path) -> Option<String> {
 /// would mangle unrelated text (and are not secrets in any useful sense).
 pub const MIN_REDACT_LEN: usize = 4;
 
-/// Replaces every occurrence of each known secret value with `<redacted>`.
-/// Applied to stored URL, header JSON, and error text so a secret the YAML
-/// interpolates into a query string or a custom header never lands in
-/// Lattice. Bodies are content-addressed blobs and are not rewritten.
+/// Replaces every occurrence of each known secret value, and of its
+/// URL-encoded forms, with `<redacted>`. One half of the shared [`Redactor`]
+/// path the store and the rendered surfaces (preview, stdout, the TUI) run
+/// through, so redaction never differs between them. Bodies are
+/// content-addressed blobs and are not rewritten.
 #[must_use]
 pub fn scrub(text: &str, secrets: &[String]) -> String {
-    let mut out = text.to_owned();
-    for secret in secrets {
-        if secret.len() >= MIN_REDACT_LEN && out.contains(secret.as_str()) {
-            out = out.replace(secret.as_str(), REDACTED);
-        }
-    }
-    out
-}
-
-/// Strips `user:password@` from a URL's authority.
-fn redact_url(url: &str) -> String {
-    let Some(scheme_end) = url.find("://") else {
-        return url.to_owned();
-    };
-    let authority_start = scheme_end + 3;
-    let authority_end = url[authority_start..]
-        .find(['/', '?', '#'])
-        .map_or(url.len(), |offset| authority_start + offset);
-    let authority = &url[authority_start..authority_end];
-    match authority.rfind('@') {
-        Some(at) => format!(
-            "{}{REDACTED}@{}{}",
-            &url[..authority_start],
-            &authority[at + 1..],
-            &url[authority_end..]
-        ),
-        None => url.to_owned(),
-    }
+    Redactor::new(secrets.iter().cloned())
+        .text(text)
+        .into_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use probe_core::{Header, HttpRequest};
 
-    use super::{form_encode, redact_url, request_hash, request_headers_json, scrub, url_encode};
+    use super::redact::Redactor;
+    use super::{form_encode, request_hash, request_headers_json, scrub, url_encode};
 
     fn request(url: &str) -> HttpRequest {
         HttpRequest {
@@ -639,22 +610,23 @@ mod tests {
 
     #[test]
     fn redacts_sensitive_headers_case_insensitively() {
-        let headers = request_headers_json(&request("http://x/").headers);
+        let headers = request_headers_json(&request("http://x/").headers, &Redactor::default());
         assert_eq!(headers[0]["value"], "<redacted>");
         assert_eq!(headers[1]["value"], "application/json");
     }
 
     #[test]
     fn redacts_url_userinfo_only() {
+        let redactor = Redactor::default();
         assert_eq!(
-            redact_url("https://user:pw@api.example.com/v1?x=1"),
+            redactor.url("https://user:pw@api.example.com/v1?x=1"),
             "https://<redacted>@api.example.com/v1?x=1"
         );
         assert_eq!(
-            redact_url("https://api.example.com/v1"),
+            redactor.url("https://api.example.com/v1"),
             "https://api.example.com/v1"
         );
-        assert_eq!(redact_url("not a url"), "not a url");
+        assert_eq!(redactor.url("not a url"), "not a url");
     }
 
     #[test]

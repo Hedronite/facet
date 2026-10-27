@@ -3,7 +3,7 @@
 //! `blob_not_found`, `run_not_found`, `session_not_found`, `session_not_set`,
 //! `invalid_sql`, and `sql_read_only`.
 
-use facet_record::HydrateError;
+use facet_record::{HydrateError, Redactor};
 use lattice::LatticeError;
 use probe_core::EnvironmentResolutionError;
 use probe_http::HttpError;
@@ -53,6 +53,20 @@ impl FacetError {
             value["error"]["details"] = details.clone();
         }
         value
+    }
+
+    /// The message and every string in `details` through
+    /// [`redact_message`].
+    #[must_use]
+    pub(crate) fn redact(mut self, redactor: &Redactor) -> Self {
+        self.message = redact_message(redactor, &self.message);
+        if let Some(details) = &mut self.details {
+            crate::redact_strings(details, &|text| {
+                let redacted = redact_message(redactor, text);
+                (redacted != text).then_some(redacted)
+            });
+        }
+        self
     }
 
     /// Attaches structured details.
@@ -297,4 +311,29 @@ impl FacetError {
             INVALID_WORKSPACE_EXIT_CODE,
         )
     }
+}
+
+/// `text` with every known value replaced, and every URL in it (a transport
+/// error names the URL it failed on) through [`Redactor::url`], which also
+/// strips userinfo.
+pub(crate) fn redact_message(redactor: &Redactor, text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(separator) = rest.find("://") {
+        let start = rest[..separator]
+            .rfind(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.'))
+            })
+            .map_or(0, |index| index + 1);
+        let end = rest[separator..]
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, ')' | '"' | '\'' | '<' | '>' | '`')
+            })
+            .map_or(rest.len(), |offset| separator + offset);
+        out.push_str(&redactor.text(&rest[..start]));
+        out.push_str(&redactor.url(&rest[start..end]));
+        rest = &rest[end..];
+    }
+    out.push_str(&redactor.text(rest));
+    out
 }

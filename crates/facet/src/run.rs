@@ -10,7 +10,7 @@ use std::{
 };
 
 use facet_record::{
-    Hydration, RecordRequest, Recording, actor_from_env, overlay_secrets, record,
+    Hydration, RecordRequest, Recording, Redactor, actor_from_env, overlay_secrets, record,
     recording_disabled, request_preview_json, session_from_env,
 };
 use lattice::now_ms;
@@ -46,7 +46,23 @@ pub(crate) struct Execution {
     pub(crate) result: Result<HttpResponse, HttpError>,
 }
 
+/// `request run`. Everything it prints, success or error, goes through one
+/// [`Redactor`] built from the run's known secret values.
 pub(crate) fn run(args: &[String], stdin: &mut impl Read) -> Result<CommandOutput, FacetError> {
+    let mut redactor = Redactor::default();
+    match run_unredacted(args, stdin, &mut redactor) {
+        Ok(output) => Ok(output.redact(&redactor)),
+        Err(error) => Err(error.redact(&redactor)),
+    }
+}
+
+/// `request run` before redaction. Fills `redactor` once the run knows its
+/// secret values.
+fn run_unredacted(
+    args: &[String],
+    stdin: &mut impl Read,
+    redactor: &mut Redactor,
+) -> Result<CommandOutput, FacetError> {
     let parsed = args::parse(args, VALUE_FLAGS, SWITCH_FLAGS)?;
     let [path, selector] = parsed.positionals() else {
         return Err(FacetError::invalid_arguments(
@@ -87,12 +103,8 @@ pub(crate) fn run(args: &[String], stdin: &mut impl Read) -> Result<CommandOutpu
         &variables,
     )?;
     let mut merged_variables = hydration.merged(&variables);
-    if let Some(token) = facet_record::auth_token_for(raw, &merged_variables) {
-        merged_variables.push(("githubToken".to_owned(), token.clone()));
-        hydration.redact.push(token);
-        hydration.hydrated.push("githubToken".to_owned());
-        hydration.source = Some("gh");
-    }
+    add_auth_token(raw, &mut hydration, &mut merged_variables);
+    *redactor = Redactor::new(hydration.redact.iter().cloned());
     let request = resolve_selected(
         &loaded,
         raw,
@@ -158,6 +170,7 @@ pub(crate) fn run(args: &[String], stdin: &mut impl Read) -> Result<CommandOutpu
         lattice_json,
         lattice_human,
         recording.warning().into_iter().collect(),
+        redactor,
     )?;
     Ok(match miss {
         Some(error) => rendered.fail(error),
@@ -268,6 +281,21 @@ pub(crate) fn hydrate(
         variables,
     )
     .map_err(FacetError::hydrate)
+}
+
+/// The `githubToken` the request's Authorization header references, from
+/// `gh`, merged last and added to the values the run redacts.
+pub(crate) fn add_auth_token(
+    request: &HttpRequest,
+    hydration: &mut Hydration,
+    merged_variables: &mut Vec<(String, String)>,
+) {
+    if let Some(token) = facet_record::auth_token_for(request, merged_variables) {
+        merged_variables.push(("githubToken".to_owned(), token.clone()));
+        hydration.redact.push(token);
+        hydration.hydrated.push("githubToken".to_owned());
+        hydration.source = Some("gh");
+    }
 }
 
 /// Adds `lattice.secrets` (names only) whenever an environment was selected,
@@ -390,7 +418,8 @@ fn execute_transport(
 
 /// Renders the upstream response document plus Facet's `lattice` field
 /// (`lattice_json` / `lattice_human`), or the upstream error envelope with
-/// `error.details.lattice` on a transport failure.
+/// `error.details.lattice` on a transport failure. URLs and response
+/// headers go through `redactor` here; the caller redacts the rest.
 pub(crate) fn render(
     request: &HttpRequest,
     execution: Execution,
@@ -398,14 +427,15 @@ pub(crate) fn render(
     lattice_json: Value,
     lattice_human: String,
     warnings: Vec<String>,
+    redactor: &Redactor,
 ) -> Result<CommandOutput, FacetError> {
     match execution.result {
         Ok(response) => {
             let human = format!(
                 "{}\nLattice: {lattice_human}\n",
-                response_human(request, &response, output),
+                response_human(request, &response, output, redactor),
             );
-            let mut json = response_json(request, &response, output);
+            let mut json = response_json(request, &response, output, redactor);
             json["lattice"] = lattice_json;
             let mut command = CommandOutput::new(human, json);
             for warning in warnings {
