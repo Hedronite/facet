@@ -46,6 +46,14 @@ separate version axes and do not move with this release.
   `HTTP_PROXY` / `HTTPS_PROXY`), and a store row that would move its host
   fails with `host_override_refused` before anything is sent. Earlier, such
   a request was sent unlocked and the host-override check skipped it.
+- The `githubToken` that `request run` and `replay` take from `gh` is sent
+  only to `https://api.github.com`, port 443 or none, with no userinfo. Any
+  other URL fails with `github_token_host_refused` (exit 5) before `gh` runs
+  and before anything is sent, in `--dry-run` too; the error names the host,
+  never the token. A request carrying that token is now sent with the locked
+  transport (no redirects, no `HTTP_PROXY` / `HTTPS_PROXY`). Earlier, the
+  token went to whatever host the collection named, with redirects and the
+  env proxy allowed. A `--var githubToken=…` is sent as before.
 
 ### Fixed
 

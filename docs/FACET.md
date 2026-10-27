@@ -667,6 +667,18 @@ any network. When no referenced variable is declared secret, backend
 problems are silent and the YAML value applies. A Lattice row for a name the
 request does not reference is ignored.
 
+`githubToken` from `gh`: when a request's `Authorization` header references
+`{{githubToken}}` and no non-empty variable or `--var` supplies it, `request
+run` and `replay` ask `gh auth token` for it. The token is sent only to
+`https://api.github.com` (host compared ignoring ASCII case, port 443 or
+none, no userinfo). For any other rendered URL, including one that does not
+parse, the command fails with `github_token_host_refused` (exit 5,
+`details.host` when the URL has one) before `gh` runs and before anything is
+sent; `--dry-run` refuses the same way. The error names the host, never the
+token. A request carrying the token is a secret request: it is sent with the
+locked transport (no redirects, no env proxy). A `--var githubToken=…` is
+the user's value and is sent as given.
+
 `facet env` is Facet's machine-store CLI, not Probe's `environment` (which
 edits YAML and rejects secrets). `set` stores one value (`--secret` routes it
 through the secrets layer and fails with `secret_backend_unavailable` when no
@@ -872,8 +884,9 @@ Facet extends the upstream table; it never renumbers it.
 
 Additional stable categories: `facet_key_invalid` (exit 3, a bad
 [`facet:` key](#the-facet-key)); `blob_not_found`, `run_not_found`,
-`session_not_found`, and `pin_not_found` (exit 4, "not found"); `session_not_set` and
-`secret_backend_unavailable` (exit 5, configuration); `invalid_sql` and
+`session_not_found`, and `pin_not_found` (exit 4, "not found"); `session_not_set`,
+`secret_backend_unavailable` and `github_token_host_refused` (exit 5,
+configuration); `invalid_sql` and
 `sql_read_only` (exit 2). Every JSON document carries `schemaVersion: 1`;
 fields are added compatibly and never removed or retyped within a version.
 

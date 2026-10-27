@@ -460,49 +460,49 @@ fn transport_errors_are_redacted_on_stdout_and_stderr() {
 
 #[test]
 fn replay_redacts_and_knows_the_token_it_sends() {
-    // `items/3` takes `githubToken` from the fake `gh`; `items/0` takes the
-    // store token. The echo body would show either unless it is known.
-    for (item, sent_token) in [("items/3", GH_TOKEN), ("items/0", TOKEN)] {
-        let what = format!("replay {item}");
-        let echo = Echo::spawn(200);
-        let sandbox = Sandbox::new(&echo.url);
-        sandbox.env_set("token", TOKEN);
+    // `items/0` takes the store token. The echo body would show it unless
+    // it is known. The `gh` token never reaches this loopback host: FN-2
+    // refuses it before `gh` runs (`github_token.rs`).
+    let (item, sent_token) = ("items/0", TOKEN);
+    let what = format!("replay {item}");
+    let echo = Echo::spawn(200);
+    let sandbox = Sandbox::new(&echo.url);
+    sandbox.env_set("token", TOKEN);
 
-        let run = request(&sandbox, item, &[], true);
-        assert_run_clean(&what, &run);
-        assert_eq!(run.code, Some(0), "{what}: first run");
-        assert!(echo.hit(&what).contains(sent_token), "{what}: run sends it");
-        let run_id = json(&what, &run)["lattice"]["runId"]
-            .as_str()
-            .expect("the run is recorded")
-            .to_owned();
+    let run = request(&sandbox, item, &[], true);
+    assert_run_clean(&what, &run);
+    assert_eq!(run.code, Some(0), "{what}: first run");
+    assert!(echo.hit(&what).contains(sent_token), "{what}: run sends it");
+    let run_id = json(&what, &run)["lattice"]["runId"]
+        .as_str()
+        .expect("the run is recorded")
+        .to_owned();
 
-        for json_output in [false, true] {
-            let what = format!("{what}, json {json_output}");
-            let mut arguments = vec!["replay", run_id.as_str(), sandbox.ws()];
-            if json_output {
-                arguments.push("--json");
-            }
-            let replay = sandbox.run(&arguments);
-            assert_run_clean(&what, &replay);
-            assert_eq!(replay.code, Some(0), "{what}: exit");
-            assert!(
-                echo.hit(&what).contains(sent_token),
-                "{what}: replay sends it"
+    for json_output in [false, true] {
+        let what = format!("{what}, json {json_output}");
+        let mut arguments = vec!["replay", run_id.as_str(), sandbox.ws()];
+        if json_output {
+            arguments.push("--json");
+        }
+        let replay = sandbox.run(&arguments);
+        assert_run_clean(&what, &replay);
+        assert_eq!(replay.code, Some(0), "{what}: exit");
+        assert!(
+            echo.hit(&what).contains(sent_token),
+            "{what}: replay sends it"
+        );
+        assert!(replay.stdout.contains("plain-body-marker"), "{what}: body");
+        assert!(
+            replay.stdout.contains("<redacted>"),
+            "{what}: nothing redacted"
+        );
+        if json_output {
+            let document = json(&what, &replay);
+            assert_eq!(document["lattice"]["replayedFrom"], run_id.as_str());
+            assert_eq!(
+                document["lattice"]["hashChanged"], false,
+                "{what}: replay resolves the request the run sent"
             );
-            assert!(replay.stdout.contains("plain-body-marker"), "{what}: body");
-            assert!(
-                replay.stdout.contains("<redacted>"),
-                "{what}: nothing redacted"
-            );
-            if json_output {
-                let document = json(&what, &replay);
-                assert_eq!(document["lattice"]["replayedFrom"], run_id.as_str());
-                assert_eq!(
-                    document["lattice"]["hashChanged"], false,
-                    "{what}: replay resolves the request the run sent"
-                );
-            }
         }
     }
 }
