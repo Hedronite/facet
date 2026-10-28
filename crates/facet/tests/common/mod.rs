@@ -125,6 +125,47 @@ impl Sandbox {
         serde_json::from_slice(&output.stdout).expect("stdout should be JSON")
     }
 
+    /// `facet env set --secret` with the value piped to `--value-stdin`, the
+    /// way a user should store a secret: `--value --secret` warns on stderr.
+    pub(crate) fn env_set_secret(
+        &self,
+        ws: &str,
+        environment: &str,
+        name: &str,
+        value: &str,
+    ) -> Value {
+        let mut child = self
+            .facet()
+            .args([
+                "env",
+                "set",
+                ws,
+                "--environment",
+                environment,
+                "--name",
+                name,
+            ])
+            .args(["--value-stdin", "--secret", "--json"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("facet should run");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(value.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success() && output.stderr.is_empty(),
+            "env set --value-stdin: exit {:?}",
+            output.status.code()
+        );
+        serde_json::from_slice(&output.stdout).expect("stdout should be JSON")
+    }
+
     /// Runs `facet … --json` and returns the exit code plus parsed stdout (errors
     /// are JSON on stdout, not stderr).
     pub(crate) fn run_error_json(&self, arguments: &[&str]) -> (u8, Value) {

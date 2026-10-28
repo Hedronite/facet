@@ -292,18 +292,7 @@ fn mcp_refuses_secret_values_as_arguments() {
     let sandbox = Sandbox::new();
     let workspace = sandbox.secret_workspace("http://127.0.0.1:9");
     let ws = workspace.to_str().unwrap();
-    sandbox.run_json(&[
-        "env",
-        "set",
-        ws,
-        "--environment",
-        "local",
-        "--name",
-        "token",
-        "--value",
-        "stored-secret",
-        "--secret",
-    ]);
+    sandbox.env_set_secret(ws, "local", "token", "stored-secret");
     let mut mcp = Mcp::start(&sandbox, &[]);
     let refused = mcp.err(
         "request_run",

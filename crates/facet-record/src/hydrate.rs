@@ -26,13 +26,14 @@ use probe_core::{
     resolve_environment_with_overrides, transport_lock,
 };
 use serde_json::{Value, json};
+use zeroize::Zeroizing;
 
 /// What the overlay contributed to one resolve.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Hydration {
     /// `(name, value)` pairs to place before the user's `--var` overrides.
     /// Values live here only until resolve; never log or store them.
-    pub overrides: Vec<(String, String)>,
+    pub overrides: Vec<(String, Zeroizing<String>)>,
     /// Names taken from Lattice, in request-reference order.
     pub hydrated: Vec<String>,
     /// How many of `hydrated` came through the secrets layer.
@@ -43,7 +44,7 @@ pub struct Hydration {
     /// Values of variables the YAML declares `secret` (hydrated or passed
     /// with `--var`), for the recorder to scrub from stored text. Never
     /// logged; only ever compared against.
-    pub redact: Vec<String>,
+    pub redact: Vec<Zeroizing<String>>,
     /// Decided once by [`transport_lock`] from variable names only: how
     /// this request must run transport-side. Beside `redact` so the secret
     /// fields retire or retune together. Not part of `lattice.secrets`.
@@ -59,6 +60,31 @@ pub struct Hydration {
     /// `lattice.secrets`; while run, replay and the TUI still read this
     /// flag directly it is set from [`TransportLock::is_locked`].
     pub references_secret: bool,
+}
+impl std::fmt::Debug for Hydration {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Names and counts only: no secret value, and no rendered value, can
+        // appear through `Hydration::fmt`.
+        formatter
+            .debug_struct("Hydration")
+            .field("hydrated", &self.hydrated)
+            .field("secrets", &self.secrets)
+            .field("source", &self.source)
+            .field("redact_values", &self.redact.len())
+            .field("override_values", &self.overrides.len())
+            .field(
+                "override_names",
+                &self
+                    .overrides
+                    .iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+            )
+            .field("lock", &self.lock)
+            .field("secret_case_collisions", &self.secret_case_collisions)
+            .field("references_secret", &self.references_secret)
+            .finish()
+    }
 }
 
 impl Hydration {
@@ -89,9 +115,15 @@ impl Hydration {
     }
 
     /// Overlay first, user overrides last (they win on collisions).
+    /// Values leave here as plain pairs for `probe-core` resolve: the
+    /// documented copy-out residual.
     #[must_use]
     pub fn merged(&self, user: &[(String, String)]) -> Vec<(String, String)> {
-        let mut merged = self.overrides.clone();
+        let mut merged: Vec<(String, String)> = self
+            .overrides
+            .iter()
+            .map(|(name, value)| (name.clone(), value.to_string()))
+            .collect();
         merged.extend(user.iter().cloned());
         merged
     }
@@ -181,14 +213,14 @@ pub fn overlay_secrets(
     let secret_case_collisions = case_collisions(&referenced, environments, environment);
     // A user `--var` for a declared secret is still a secret: remember its
     // value for redaction even though Lattice is not consulted for it.
-    let mut redact: Vec<String> = referenced
+    let mut redact: Vec<Zeroizing<String>> = referenced
         .iter()
         .filter(|info| info.secret)
         .filter_map(|info| {
             user_overrides
                 .iter()
                 .find(|(name, _)| *name == info.name)
-                .map(|(_, value)| value.clone())
+                .map(|(_, value)| Zeroizing::new(value.clone()))
         })
         .collect();
     let referenced: Vec<_> = referenced
@@ -324,7 +356,7 @@ pub fn overlay_secrets(
 }
 
 fn idle(
-    redact: Vec<String>,
+    redact: Vec<Zeroizing<String>>,
     lock: TransportLock,
     secret_case_collisions: Vec<(String, String)>,
 ) -> Hydration {
@@ -415,7 +447,7 @@ fn refused_host_name(
     request: &HttpRequest,
     environments: &[Environment],
     environment: &str,
-    store_overrides: &[(String, String)],
+    store_overrides: &[(String, Zeroizing<String>)],
     user_overrides: &[(String, String)],
 ) -> Option<String> {
     let declared = resolved_url(request, environments, environment, user_overrides).ok()??;
@@ -424,7 +456,7 @@ fn refused_host_name(
         if user_overrides.iter().any(|(user, _)| user == name) {
             continue;
         }
-        applied.push((name.clone(), value.clone()));
+        applied.push((name.clone(), value.to_string()));
         let mut merged = applied.clone();
         merged.extend(user_overrides.iter().cloned());
         let url = match resolved_url(request, environments, environment, &merged) {
@@ -591,7 +623,7 @@ fn parse_authority(url: &str) -> Option<AuthorityPin> {
 fn secret_var_redact(
     referenced: &[probe_core::RequestVariableInfo],
     user_overrides: &[(String, String)],
-) -> Vec<String> {
+) -> Vec<Zeroizing<String>> {
     referenced
         .iter()
         .filter(|info| info.secret)
@@ -599,7 +631,7 @@ fn secret_var_redact(
             user_overrides
                 .iter()
                 .find(|(name, _)| name == &info.name)
-                .map(|(_, value)| value.clone())
+                .map(|(_, value)| Zeroizing::new(value.clone()))
         })
         .collect()
 }
@@ -608,16 +640,17 @@ fn secret_var_redact(
 mod tests {
     use super::Hydration;
     use super::{TransportLock, case_collisions, declared_secret_names, raise_to_secret};
+    use crate::Zeroizing;
     use probe_core::{Environment, HttpRequest, SecretVariable};
 
     #[test]
     fn user_overrides_come_last_and_human_counts() {
         let hydration = Hydration {
-            overrides: vec![("token".to_owned(), "abc".to_owned())],
+            overrides: vec![("token".to_owned(), Zeroizing::new("abc".to_owned()))],
             hydrated: vec!["token".to_owned()],
             secrets: 1,
             source: Some("encrypted"),
-            redact: vec!["abc".to_owned()],
+            redact: vec![Zeroizing::new("abc".to_owned())],
             lock: probe_core::TransportLock::Open,
             secret_case_collisions: vec![],
             references_secret: false,

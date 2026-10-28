@@ -2,6 +2,7 @@ use probe_core::{Body, HttpRequest, RequestBody, TransportLock};
 use probe_http::{HttpError, HttpResponse, ResponseHeader};
 use std::process::Stdio;
 use std::time::Instant;
+use zeroize::Zeroizing;
 
 use crate::SENSITIVE_HEADERS;
 use crate::child::{self, ChildError, Program};
@@ -11,7 +12,7 @@ use crate::child::{self, ChildError, Program};
 pub fn auth_token_for(
     request: &HttpRequest,
     overrides: &[(String, String)],
-) -> Result<Option<String>, ChildError> {
+) -> Result<Option<Zeroizing<String>>, ChildError> {
     let references_token = request.headers.iter().any(|header| {
         header.name.eq_ignore_ascii_case("authorization")
             && header.value.contains("{{githubToken}}")
@@ -35,7 +36,7 @@ pub fn auth_token_for(
         return Ok(None);
     };
     let token = token.trim().to_owned();
-    Ok((!token.is_empty()).then_some(token))
+    Ok((!token.is_empty()).then(|| Zeroizing::new(token)))
 }
 
 /// Runs a GitHub collection request through gh when native HTTP failed.
@@ -51,7 +52,7 @@ pub fn auth_token_for(
 pub fn api_fallback(
     request: &HttpRequest,
     lock: TransportLock,
-    known: &[String],
+    known: &[Zeroizing<String>],
 ) -> Option<Result<HttpResponse, HttpError>> {
     if lock.is_locked() {
         return None;
@@ -150,10 +151,11 @@ fn github_api_path(url: &str) -> Option<&str> {
 
 /// Whether any non-empty value in `known` occurs in `text`. An empty value
 /// can never match.
-fn contains_a_known_value(text: &str, known: &[String]) -> bool {
-    known
-        .iter()
-        .any(|known| !known.is_empty() && text.contains(known))
+fn contains_a_known_value(text: &str, known: &[Zeroizing<String>]) -> bool {
+    known.iter().any(|known| {
+        let known = known.as_str();
+        !known.is_empty() && text.contains(known)
+    })
 }
 
 fn request_body(request: &HttpRequest) -> Option<String> {

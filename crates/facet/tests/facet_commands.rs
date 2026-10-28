@@ -1100,18 +1100,7 @@ fn secret_request_body_blob_is_scrubbed_at_write() {
     let (url, server) = serve_once(ECHO_BODY.to_vec(), "application/json");
     let workspace = sandbox.secret_workspace(&url);
     let ws = workspace.to_str().unwrap();
-    sandbox.run_json(&[
-        "env",
-        "set",
-        ws,
-        "--environment",
-        "local",
-        "--name",
-        "token",
-        "--value",
-        SECRET_VALUE,
-        "--secret",
-    ]);
+    sandbox.env_set_secret(ws, "local", "token", SECRET_VALUE);
     let run = sandbox.run_json(&[
         "request",
         "run",
@@ -1160,18 +1149,7 @@ fn secret_hydration_overlays_lattice_values_before_resolve() {
 
     // `facet env set --secret` stores through the secrets layer; list is
     // metadata only.
-    let set = sandbox.run_json(&[
-        "env",
-        "set",
-        ws,
-        "--environment",
-        "local",
-        "--name",
-        "token",
-        "--value",
-        SECRET_VALUE,
-        "--secret",
-    ]);
+    let set = sandbox.env_set_secret(ws, "local", "token", SECRET_VALUE);
     assert_eq!(set["entry"]["secret"], true);
     assert_eq!(set["entry"]["name"], "token");
     assert!(!set.to_string().contains(SECRET_VALUE));
@@ -1503,18 +1481,7 @@ fn history_sql_cannot_reach_the_machine_store_or_any_secret_ref() {
     record_one_run(&sandbox, &[]);
     let root = sandbox.root().to_str().unwrap();
     // Put a real secret in the machine store so `environments.secret_ref` exists.
-    sandbox.run_json(&[
-        "env",
-        "set",
-        root,
-        "--environment",
-        "local",
-        "--name",
-        "token",
-        "--value",
-        "probe-secret-value",
-        "--secret",
-    ]);
+    sandbox.env_set_secret(root, "local", "token", "probe-secret-value");
 
     // The machine store lives under FACET_DATA_DIR (sandbox/machine/lattice.db).
     // `--sql` must not be able to ATTACH it.
@@ -1783,18 +1750,7 @@ fn dry_run_previews_without_sending_or_recording() {
     // Hydrated secrets are redacted in the preview.
     let secret_ws = sandbox.secret_workspace("http://127.0.0.1:9");
     let sws = secret_ws.to_str().unwrap();
-    sandbox.run_json(&[
-        "env",
-        "set",
-        sws,
-        "--environment",
-        "local",
-        "--name",
-        "token",
-        "--value",
-        SECRET_VALUE,
-        "--secret",
-    ]);
+    sandbox.env_set_secret(sws, "local", "token", SECRET_VALUE);
     let hydrated = sandbox.run_json(&[
         "request",
         "run",

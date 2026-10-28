@@ -334,7 +334,7 @@ facet session list [--limit <n>] [--actor <name>] [--open] [--json]
 facet session show <id>|current [--json]
 facet replay <runId> [<path>] [--frozen] [--environment <name>] [--var k=v]... [--tag <tag>]... [--expect <codes>] [--strict-variables] [--no-record] [--no-subprocess] [--allow-file-outside-root] [--json]
 facet diff <idA> <idB> [<path>] [--bodies] [--json]
-facet env set [<path>] --environment <name> --name <key> --value <value> [--secret] [--json]
+facet env set [<path>] --environment <name> --name <key> (--value <value> | --value-stdin) [--secret] [--json]
 facet env list [<path>] [--environment <name>] [--json]
 facet env delete [<path>] --environment <name> --name <key> [--json]
 facet blob <hash> [<path>] [--output <file>] [--json]
@@ -759,7 +759,18 @@ trusted to choose what they send.
 edits YAML and rejects secrets). `set` stores one value (`--secret` routes it
 through the secrets layer and fails with `secret_backend_unavailable` when no
 backend can hold it); it creates the workspace store beside `<path>` when
-none exists. `list` and `set` return metadata only:
+none exists.
+
+`--value-stdin` reads the value from a pipe instead of argv, where other
+processes on the machine can read it: `pass show api/token | facet env set
+--environment local --name token --value-stdin --secret`. One trailing `\n`
+or `\r\n` is stripped. It fails `invalid_arguments` (exit 2), with nothing
+it read in the error, when stdin is a terminal (there is no echo-off
+prompt), when the value is empty or not UTF-8, and when `--value` is given
+too. `--value` with `--secret` still works and prints one `warning:` line on
+stderr that names `--value-stdin`; the warning never holds the value.
+
+`list` and `set` return metadata only:
 
 ```json
 { "schemaVersion": 1, "workspace": { "id": "…", "path": "…" },
@@ -788,6 +799,19 @@ flag to reveal them.
 known secrets at write, like the other stored text; response bodies are
 stored as received and may hold what the server sent. `facet blob` is the
 one place a human knowingly opens a body.
+
+Secret values in memory: Facet keeps the values it hydrates, the `--var`
+overrides, the values it redacts, the `githubToken` from `gh`, the values
+the machine store decrypts, and the `--value-stdin` buffer in buffers that
+are zeroed when they are dropped. Residual: to render a request, Facet
+hands `probe-core` plain copies of the merged variables, and the resolved
+request holds rendered values (URL, headers, body) in `probe-core` types
+that are not zeroed. The redactor that scrubs output keeps its own plain
+copies of the known values. Neither are the copies the HTTP client, TLS
+and the operating system make while sending zeroed. Zeroing is best effort: it shortens
+how long a value stays in freed memory, and it does not protect against a
+process that can read Facet's memory while it runs. `probe-core` is not
+changed to hold zeroed values.
 
 ### `doctor`
 

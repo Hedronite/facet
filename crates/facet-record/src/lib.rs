@@ -29,6 +29,7 @@ pub use hydrate::{HydrateError, Hydration, overlay_secrets};
 pub use policy::{PolicyError, RecordPolicy, record_policy};
 pub use redact::Redactor;
 pub use transport::{http_engine_from_env, http_engine_from_kubeconfig, kube_api_base_from_env};
+pub use zeroize::Zeroizing;
 
 use lattice::{
     BodyInput, LatticeConfig, LatticeError, MachineStore, NewRun, Retention, RunRow,
@@ -227,7 +228,7 @@ pub struct RecordRequest<'a> {
     /// Secret values to scrub from stored text (URL, header values, error
     /// text) and from the stored request-body bytes before the row is
     /// written. See [`Hydration::redact`].
-    pub redact: &'a [String],
+    pub redact: &'a [Zeroizing<String>],
     /// The Facet-owned `facet:` policy of this request, decided before
     /// anything is sent by [`record_policy`]. When it forbids recording,
     /// `record` writes no run row and no blob, whatever the flags,
@@ -274,7 +275,7 @@ pub fn record(req: &RecordRequest<'_>) -> Recording {
 
     let req_body_bytes = request_body_bytes(request);
     let request_hash = request_hash(request, req_body_bytes.as_deref());
-    let redactor = Redactor::new(redact.iter().cloned());
+    let redactor = Redactor::new(redact.iter().map(|value| value.to_string()));
     let req_headers = request_headers_json(&request.headers, &redactor).to_string();
     let error_text = result
         .as_ref()
@@ -450,9 +451,9 @@ fn url_encode(value: &str) -> String {
 /// userinfo, known secret values) so a preview is safe to paste. Bodies are
 /// shown inline when UTF-8 and under `MAX_PREVIEW_BODY`, else by size only.
 #[must_use]
-pub fn request_preview_json(request: &HttpRequest, redact: &[String]) -> Value {
+pub fn request_preview_json(request: &HttpRequest, redact: &[Zeroizing<String>]) -> Value {
     const MAX_PREVIEW_BODY: usize = 64 * 1024;
-    let redactor = Redactor::new(redact.iter().cloned());
+    let redactor = Redactor::new(redact.iter().map(|value| value.to_string()));
     let body = request_body_bytes(request);
     let body_json = match body.as_deref() {
         None => {
@@ -623,6 +624,7 @@ mod tests {
         ConfigOverrides, RecordPolicy, RecordRequest, Recording, form_encode, record,
         request_body_bytes, request_hash, request_headers_json, scrub, url_encode,
     };
+    use crate::Zeroizing;
     use lattice::sha256_hex;
 
     fn request(url: &str) -> HttpRequest {
@@ -737,6 +739,12 @@ mod tests {
         let empty: Vec<String> = vec![];
         let tags: Vec<String> = vec![];
         let actor = "human".to_owned();
+        // The rest of the helper is unchanged; the redact values are
+        // zeroized here the way real callers receive them.
+        let redact: Vec<Zeroizing<String>> = secrets
+            .iter()
+            .map(|value| Zeroizing::new(value.clone()))
+            .collect();
         let recording = record(&RecordRequest {
             root: Some(store.path()),
             overrides: &ConfigOverrides::default(),
@@ -752,7 +760,7 @@ mod tests {
             session: None,
             replayed_from: None,
             var_names: &empty,
-            redact: secrets,
+            redact: &redact,
             policy: RecordPolicy::Allowed,
         });
         match recording {
