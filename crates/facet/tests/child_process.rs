@@ -44,7 +44,7 @@ const REFUSED_EXIT: i32 = 5;
 const CHILD_ENV: [&str; 3] = ["GH_CONFIG_DIR", "HOME", "PATH"];
 /// Set in the parent for the env check. Proxy names are only set where
 /// nothing is sent.
-const PARENT_ENV: [&str; 9] = [
+const PARENT_ENV: [&str; 8] = [
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "FACET_H1_CANARY",
@@ -53,8 +53,11 @@ const PARENT_ENV: [&str; 9] = [
     "ALL_PROXY",
     "SSH_AUTH_SOCK",
     "GIT_DIR",
-    "LD_PRELOAD",
 ];
+/// Loader variables, set in the parent but empty: glibc's loader would try
+/// to preload a canary path into `facet` itself and print it on stderr, while
+/// an empty value is ignored. The child env check catches the name alone.
+const LOADER_ENV: [&str; 1] = ["LD_PRELOAD"];
 
 const COLLECTION: &str = r#"opencollection: 1.0.0
 info: { name: H1 child processes }
@@ -342,6 +345,9 @@ fn gh_runs_from_facet_gh_with_the_fixed_env_never_from_path() {
     for name in PARENT_ENV {
         command.env(name, PARENT_CANARY);
     }
+    for name in LOADER_ENV {
+        command.env(name, "");
+    }
     let run = fx.run(&mut command);
     assert_eq!(run.code, Some(0), "dry run: {}", run.stderr);
     assert!(!run.mentions(GH_TOKEN), "dry run: the gh token printed");
@@ -354,6 +360,9 @@ fn gh_runs_from_facet_gh_with_the_fixed_env_never_from_path() {
     assert_eq!(calls.len(), 1, "dry run: gh auth token runs once");
     assert_eq!(calls[0].argv, ["auth", "token"]);
     assert_child_env("dry run", &calls);
+    for name in LOADER_ENV {
+        assert_eq!(env_of(&calls[0], name), None, "dry run: {name} reached gh");
+    }
     assert_eq!(env_of(&calls[0], "HOME"), home.to_str());
     assert_eq!(env_of(&calls[0], "GH_CONFIG_DIR"), gh_config.to_str());
     assert!(!fx.gh.dump_contains(GH_TOKEN), "gh received its own token");
