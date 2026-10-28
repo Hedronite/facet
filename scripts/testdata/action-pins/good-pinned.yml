@@ -1,0 +1,16 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned steps pass, a local action passes, and the commented-out
+      # unpinned line is ignored.
+      # - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: "dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8" # master
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/local
+      - name: Not a step key
+        run: 'echo "uses: actions/checkout@v7 is text here"'
