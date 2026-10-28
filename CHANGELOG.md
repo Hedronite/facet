@@ -60,6 +60,7 @@ separate version axes and do not move with this release.
   transport (no redirects, no `HTTP_PROXY` / `HTTPS_PROXY`). Earlier, the
   token went to whatever host the collection named, with redirects and the
   env proxy allowed. A `--var githubToken=…` is sent as before.
+- Security: every GitHub Action in CI and release is pinned to a full commit SHA, and scripts/check-action-pins.sh enforces this in CI. Release builds and tests run with --locked. Each release asset and SHA256SUMS carries a keyless build provenance attestation; verify a download with gh attestation verify <asset> --repo Hedronite/facet.
 
 ### Fixed
 
