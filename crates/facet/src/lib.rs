@@ -249,6 +249,7 @@ pub const fn help() -> &'static str {
         "      --no-record             Execute without writing to Lattice\n",
         "      --expect <codes>        Assert the status: 200,201 or 2xx; miss is exit 1 expect_failed\n",
         "      --dry-run               Resolve and preview the request without sending or recording\n",
+        "      --no-subprocess         Start no gh or git child (request run, replay); {{githubToken}} needs --var\n",
         "      --tag <tag>             Tag the recorded run, or filter history by tag (AND); may be repeated\n",
         "      --inline-body-max <n>   Inline bodies at or under this size (e.g. 64KiB)\n",
         "      --history-retention <r> Retention window for gc (unlimited or e.g. 30d)\n",
@@ -276,7 +277,8 @@ pub const fn help() -> &'static str {
         "\n",
         "Environment: FACET_ACTOR (run actor, default human), FACET_SESSION (session id),\n",
         "FACET_NO_RECORD=1 (never record), FACET_DATA_DIR / FACET_CONFIG_DIR (machine store paths),\n",
-        "FACET_SECRET_KEY (encrypted secrets instead of the OS keyring).\n",
+        "FACET_SECRET_KEY (encrypted secrets instead of the OS keyring), FACET_NO_SUBPROCESS=1\n",
+        "(no gh or git child), FACET_GH / FACET_GIT (absolute path to that program).\n",
     )
 }
 

@@ -134,6 +134,12 @@ pub(crate) fn doctor(args: &[String]) -> Result<CommandOutput, FacetError> {
     Ok(finish(doctor_json, warnings, exit_code))
 }
 
+/// Whether `FACET_NO_SUBPROCESS` turns every child process off: any
+/// non-empty value. `--no-subprocess` is per command, so doctor never sees it.
+fn no_subprocess() -> bool {
+    std::env::var_os("FACET_NO_SUBPROCESS").is_some_and(|value| !value.is_empty())
+}
+
 /// `FACET_*` presence (names only; values are never printed by any command).
 fn env_json() -> Value {
     json!({
@@ -142,6 +148,7 @@ fn env_json() -> Value {
         "FACET_DATA_DIR": std::env::var_os("FACET_DATA_DIR").is_some(),
         "FACET_CONFIG_DIR": std::env::var_os("FACET_CONFIG_DIR").is_some(),
         "FACET_NO_RECORD": std::env::var_os("FACET_NO_RECORD").is_some(),
+        "FACET_NO_SUBPROCESS": no_subprocess(),
         "FACET_SECRET_KEY": std::env::var_os("FACET_SECRET_KEY").is_some(),
     })
 }
@@ -218,6 +225,10 @@ fn doctor_human(doctor: &Value, warnings: &[String]) -> Vec<u8> {
         _ => "usability not checked (pass --probe)",
     };
     lines.push(format!("  secrets: backend {backend}, {usable}"));
+    lines.push(format!(
+        "  child processes: {} (FACET_NO_SUBPROCESS)",
+        if no_subprocess() { "off" } else { "on" }
+    ));
     lines.push("  env: FACET_* presence checked (values never printed)".into());
     if warnings.is_empty() {
         lines.push("healthy".into());

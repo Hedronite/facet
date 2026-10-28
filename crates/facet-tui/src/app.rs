@@ -5428,6 +5428,127 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Env var naming the scratch dir for [`switch_probe_child`]. The child
+    /// is this same test binary, re-run in its own process, because the
+    /// switch is read from the environment and edition 2024 forbids
+    /// `set_var` without `unsafe`.
+    const SWITCH_PROBE_DIR: &str = "FACET_TUI_SWITCH_PROBE_DIR";
+
+    /// A `/bin/sh` stub that appends its argv to `marker`, and answers
+    /// `git -C DIR rev-parse HEAD` with a fixed SHA.
+    fn marker_stub(dir: &Path, name: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        let marker = dir.join(format!("{name}.called"));
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\n\
+                 echo \"$*\" >> '{}'\n\
+                 if [ \"$3\" = rev-parse ]; then echo 0123456789abcdef0123456789abcdef01234567; fi\n\
+                 if [ \"$1\" = auth ]; then echo gho_tui_switch_canary; fi\n\
+                 exit 0\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (path, marker)
+    }
+
+    /// G1d, the TUI surface. A TUI send's only child is `git`, for the
+    /// recorded run's `git:` tag; the TUI never asks `gh` for
+    /// `{{githubToken}}`. With `FACET_NO_SUBPROCESS` set, the `git` stub
+    /// never runs, the send still completes and is recorded, and nothing is
+    /// left in flight. The control, without the switch, runs `git`.
+    #[test]
+    fn subprocess_switch_reaches_the_tui_send() {
+        for (what, switch, git_runs) in [("control", None, true), ("switch", Some("1"), false)] {
+            let dir = unique_temp_dir("facet-tui-switch");
+            std::fs::create_dir_all(&dir).unwrap();
+            let (gh, gh_marker) = marker_stub(&dir, "gh");
+            let (git, git_marker) = marker_stub(&dir, "git");
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "app::tests::switch_probe_child",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(SWITCH_PROBE_DIR, &dir)
+                .env("FACET_GH", &gh)
+                .env("FACET_GIT", &git)
+                .env_remove("FACET_NO_SUBPROCESS")
+                .env_remove("FACET_NO_RECORD")
+                .env_remove("GH_TOKEN")
+                .env_remove("GITHUB_TOKEN");
+            if let Some(value) = switch {
+                child.env("FACET_NO_SUBPROCESS", value);
+            }
+            let out = child.output().unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success(),
+                "{what}: probe failed\n{stdout}\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                stdout.contains("switch_probe_child ... ok"),
+                "{what}: the probe did not run\n{stdout}"
+            );
+            assert_eq!(git_marker.exists(), git_runs, "{what}: git marker");
+            assert!(!gh_marker.exists(), "{what}: the TUI ran gh");
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// The child half of [`subprocess_switch_reaches_the_tui_send`]. A
+    /// recorded send of a `{{githubToken}}` request to a loopback stand-in
+    /// for api.github.com; no network.
+    #[tokio::test]
+    #[ignore = "run in its own process by subprocess_switch_reaches_the_tui_send"]
+    async fn switch_probe_child() {
+        let dir = PathBuf::from(std::env::var_os(SWITCH_PROBE_DIR).expect("probe dir"));
+        let (url, server) = one_shot_server();
+        // Unbundled, so the source is the workspace directory and the
+        // recorded send reaches `git_tag`.
+        let ws = dir.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(
+            ws.join("opencollection.yml"),
+            "opencollection: 1.0.0\ninfo:\n  name: Switch\nbundled: false\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ws.join("user.yml"),
+            format!(
+                "info:\n  name: User\n  type: http\n  seq: 1\n\
+                 http:\n  method: GET\n  url: {url}\n  headers:\n\
+                 \x20   - name: Authorization\n      value: Bearer {{{{githubToken}}}}\n"
+            ),
+        )
+        .unwrap();
+        drop(WorkspaceStore::open(&ws, LatticeConfig::default()).unwrap());
+        let mut app = App::load(Some(&ws)).await;
+        assert!(app.selected_request().is_some(), "{:?}", app.status);
+
+        app.run_selected().await.unwrap();
+        finish_send(&mut app).await;
+        server.join().expect("the request reached the stand-in");
+
+        assert!(!app.is_in_flight());
+        assert!(
+            matches!(app.status, RunStatus::Done { status: 200, .. }),
+            "{:?}",
+            app.status
+        );
+        let recording = app.last_recording().expect("record was consulted");
+        assert_eq!(recording.note, "recorded", "{recording:?}");
+        assert!(recording.run_id.is_some(), "{recording:?}");
+    }
+
     /// FN-1: with an environment selected, a variable the YAML declares
     /// plain passes the predicate as Open, and a store row marked secret
     /// raises hydration's lock. The send takes the raised lock in every

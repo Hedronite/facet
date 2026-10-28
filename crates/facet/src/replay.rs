@@ -38,7 +38,12 @@ const VALUE_FLAGS: &[&str] = &[
     "--inline-body-max",
     "--history-retention",
 ];
-const SWITCH_FLAGS: &[&str] = &["--frozen", "--strict-variables", "--no-record"];
+const SWITCH_FLAGS: &[&str] = &[
+    "--frozen",
+    "--strict-variables",
+    "--no-record",
+    "--no-subprocess",
+];
 
 pub(crate) fn replay(args: &[String], stdin: &mut impl Read) -> Result<CommandOutput, FacetError> {
     let mut redactor = Redactor::default();
@@ -56,6 +61,9 @@ fn replay_unredacted(
     redactor: &mut Redactor,
 ) -> Result<CommandOutput, FacetError> {
     let parsed = args::parse(args, VALUE_FLAGS, SWITCH_FLAGS)?;
+    if parsed.switch("--no-subprocess") {
+        facet_record::child::disable();
+    }
     let (run_id, path) = match parsed.positionals() {
         [run_id] => (run_id.as_str(), "."),
         [run_id, path] => (run_id.as_str(), path.as_str()),

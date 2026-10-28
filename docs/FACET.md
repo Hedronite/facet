@@ -137,6 +137,8 @@ in the output means the run is recorded but not indexed).
 
 Environment: `FACET_ACTOR` names the actor (default `human`);
 `FACET_SESSION` sets `sessionId`; `FACET_NO_RECORD=1` disables recording.
+`FACET_NO_SUBPROCESS` (any non-empty value) starts no `gh` or `git` child;
+see [Child processes](#child-processes).
 
 `FACET_SESSION` is written onto the run row. `facet session start` mints the
 parent; recording mint-if-missing if the env is set and the row is absent.
@@ -317,7 +319,7 @@ see [Cluster transport](CLUSTER-TRANSPORT.md). Configure credentials through an
 explicit project kubeconfig, separately from canonical collection YAML.
 
 ```text
-facet request run <path> <selector> [<probe request run flags>] [--no-record] [--tag <tag>]... [--expect <codes>] [--dry-run] [--inline-body-max <size>] [--json]
+facet request run <path> <selector> [<probe request run flags>] [--no-record] [--no-subprocess] [--tag <tag>]... [--expect <codes>] [--dry-run] [--inline-body-max <size>] [--json]
 facet history [<path>] [--limit <n>] [--request <selector>] [--status <code>] [--actor <name>] [--since <unix-ms>] [--session <id>|current] [--environment <name>] [--tag <tag>]... [--hash <sha256>] [--bodies] [--json]
 facet history [<path>] --id <ulid> [--bodies] [--json]
 facet last [<path>] [--request <selector>] [--status <code>] [--actor <name>] [--since <unix-ms>] [--session <id>|current] [--environment <name>] [--tag <tag>]... [--hash <sha256>] [--bodies] [--json]
@@ -330,7 +332,7 @@ facet session start [--actor <name>] [--meta <json>] [--json]
 facet session end [<id>|current] [--json]
 facet session list [--limit <n>] [--actor <name>] [--open] [--json]
 facet session show <id>|current [--json]
-facet replay <runId> [<path>] [--frozen] [--environment <name>] [--var k=v]... [--tag <tag>]... [--expect <codes>] [--strict-variables] [--no-record] [--json]
+facet replay <runId> [<path>] [--frozen] [--environment <name>] [--var k=v]... [--tag <tag>]... [--expect <codes>] [--strict-variables] [--no-record] [--no-subprocess] [--json]
 facet diff <idA> <idB> [<path>] [--bodies] [--json]
 facet env set [<path>] --environment <name> --name <key> --value <value> [--secret] [--json]
 facet env list [<path>] [--environment <name>] [--json]
@@ -681,8 +683,42 @@ parse, the command fails with `github_token_host_refused` (exit 5,
 `details.host` when the URL has one) before `gh` runs and before anything is
 sent; `--dry-run` refuses the same way. The error names the host, never the
 token. A request carrying the token is a secret request: it is sent with the
-locked transport (no redirects, no env proxy). A `--var githubToken=…` is
-the user's value and is sent as given.
+locked transport (no redirects, no env proxy), and it is locked once it
+passes the host check, before `gh` is asked. A `--var githubToken=…` is the
+user's value and is sent as given.
+
+#### Child processes
+
+Facet starts two programs, and only through one place: `gh` (`gh auth
+token` for `{{githubToken}}`, and `gh api` as a fallback when a native send
+to `https://api.github.com` fails) and `git` (the `git:<sha>` auto-tag on a
+recorded run).
+
+- **Path.** `gh` is the first regular file in `/opt/homebrew/bin/gh`,
+  `/usr/local/bin/gh`, `/usr/bin/gh`; `git` the first in `/usr/bin/git`,
+  `/opt/homebrew/bin/git`, `/usr/local/bin/git`. `FACET_GH` / `FACET_GIT`
+  replace the list with one absolute path to an existing regular file.
+  `PATH` is never searched. A relative or missing override fails
+  `subprocess_path_refused` (exit 5) before spawn, and the error never
+  names the path. With no override and no program at a listed location,
+  `{{githubToken}}` gets no token and a recorded run no `git:` tag, as
+  before; `PATH` is not searched instead.
+- **Environment.** Cleared, then `HOME` and `GH_CONFIG_DIR` when set, and
+  `PATH=/usr/bin:/bin`. Nothing else: no `FACET_*`, no `GH_TOKEN`, no proxy
+  variables, no `SSH_*`. Stdin is null, except the body of an unlocked
+  `gh api --input -`. No value the run knows is secret reaches a child's
+  argv, stdin or env.
+- **Switch.** `--no-subprocess` on `request run` and `replay`, or a
+  non-empty `FACET_NO_SUBPROCESS` (which the TUI and MCP honour too), starts
+  no child at all. `{{githubToken}}` with no `--var githubToken=…` then
+  fails `subprocess_disabled` (exit 5) before anything is sent, after the
+  host check; the `gh api` fallback stays off, so the native error stands;
+  and a recorded run has no `git:` tag. `facet doctor` shows whether the
+  switch is on.
+- **`gh api` fallback.** Only for an open send to `https://api.github.com`
+  (the same origin rule as the token). Never for a locked send. A header
+  named in the sensitive list, or one whose value holds a known secret,
+  never goes on the argv of `gh`.
 
 `facet env` is Facet's machine-store CLI, not Probe's `environment` (which
 edits YAML and rejects secrets). `set` stores one value (`--secret` routes it
@@ -724,8 +760,10 @@ Preflight. Reports, never fixes. Exit **0** healthy, **1** warnings, **9**
 when the machine store cannot be opened. `--probe` round-trips a throwaway
 secret through the secrets layer and sets `secrets.usable`; without it
 usability is `null`. No value, `secret_ref`, or `FACET_SECRET_KEY` is
-printed. Human lists warnings; JSON is `machine` / `workspace` / `secrets`
-/ `env` (presence of `FACET_*` only).
+printed. Human lists warnings and a `child processes: on|off
+(FACET_NO_SUBPROCESS)` line; JSON is `machine` / `workspace` / `secrets` /
+`env` (presence of `FACET_*` only; `env.FACET_NO_SUBPROCESS` is true when
+the variable is non-empty, which turns child processes off).
 
 ### `blob`
 

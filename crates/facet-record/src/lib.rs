@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod child;
 mod diff;
 mod github;
 mod hydrate;
@@ -13,7 +14,10 @@ mod policy;
 pub mod redact;
 mod transport;
 
+use std::ffi::OsStr;
 use std::path::Path;
+
+pub use child::{ChildError, Program};
 
 pub use diff::{
     BodyDiff, BodySide, FieldChange, PROVENANCE_FIELDS, RunDiff, compare, diff_request_bodies,
@@ -556,21 +560,19 @@ pub fn is_auto_tag(tag: &str) -> bool {
 
 /// `git:<sha>` or `git:<sha>-dirty` for the repository containing `dir`
 /// (the workspace root, beside the collection), or `None` outside a
-/// repository, without `git`, or on any failure. Local only: `rev-parse
+/// repository, without `git`, on any failure, or when the subprocess
+/// switch is on (or the `git` path is refused): the tag is metadata, never
+/// a send. Local only: `rev-parse
 /// HEAD` plus `status --porcelain --untracked-files=no`, so "dirty" means
 /// tracked changes (staged or unstaged); untracked files do not count, or a
 /// fresh `.facet/workspace.toml` would flag every first run.
 #[must_use]
 pub fn git_tag(dir: &Path) -> Option<String> {
     let git = |args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()
+        let mut argv: Vec<&OsStr> = vec![OsStr::new("-C"), dir.as_os_str()];
+        argv.extend(args.iter().map(OsStr::new));
+        child::output(Program::Git, argv)
+            .ok()?
             .filter(|output| output.status.success())
             .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
     };
