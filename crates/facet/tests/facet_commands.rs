@@ -2222,15 +2222,17 @@ items:
   - info: { name: Get repo without auth, type: http }
     http:
       method: GET
-      url: https://api.github.com.invalid/repos/example/project
+      url: https://api.github.com/repos/example/project
 "#;
     let workspace = sandbox.root().join("github.yml");
     fs::write(&workspace, source).unwrap();
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let run = |item: &str| {
         sandbox
             .facet()
-            .env("PATH", &path)
+            .env("FACET_GH", &gh)
+            // The native engine fails before it connects, so the
+            // api.github.com item reaches the `gh api` fallback offline.
+            .env("FACET_KUBECONFIG", "")
             .args([
                 "request",
                 "run",
@@ -2267,7 +2269,11 @@ items:
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"source\":\"gh\""));
+    let answered: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        answered["response"]["body"]["content"], "{\"source\":\"gh\"}",
+        "the gh api fallback should answer"
+    );
     assert!(
         !marker.exists(),
         "gh auth token ran without {{githubToken}}"

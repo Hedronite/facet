@@ -60,6 +60,12 @@ impl Sandbox {
             .env_remove("FACET_KUBE_CONTEXT")
             .env_remove("FACET_HEDRON_DB")
             .env_remove("FACET_HEDRON_TOKEN")
+            // `gh` and `git` come from FACET_GH / FACET_GIT or a fixed list,
+            // never PATH. A missing FACET_GH is refused, so no test reaches a
+            // real `gh`; a test that wants one points FACET_GH at a stub.
+            .env("FACET_GH", self.root().join("no-gh"))
+            .env_remove("FACET_GIT")
+            .env_remove("FACET_NO_SUBPROCESS")
             // Encrypted secrets backend: deterministic, no OS keyring prompts.
             .env("FACET_SECRET_KEY", "test-master-key")
             // Session metadata picks these up when present; goldens must not.

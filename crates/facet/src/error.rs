@@ -3,7 +3,7 @@
 //! `blob_not_found`, `run_not_found`, `session_not_found`, `session_not_set`,
 //! `invalid_sql`, and `sql_read_only`.
 
-use facet_record::{HydrateError, PolicyError, Redactor};
+use facet_record::{HydrateError, PolicyError, Redactor, child::ChildError};
 use lattice::LatticeError;
 use probe_core::EnvironmentResolutionError;
 use probe_http::HttpError;
@@ -236,6 +236,15 @@ impl FacetError {
             )
             .with_details(json!({ "variable": name })),
         }
+    }
+
+    /// A child process (`gh`, `git`) Facet would start was refused before
+    /// spawn: `subprocess_disabled` when `--no-subprocess` or
+    /// `FACET_NO_SUBPROCESS` turned children off, `subprocess_path_refused`
+    /// when `FACET_GH` / `FACET_GIT` is not an absolute path to a regular
+    /// file. The message names the program and variable, never a path.
+    pub(crate) fn subprocess(error: &ChildError) -> Self {
+        Self::new(error.category(), error.to_string(), CONFIGURATION_EXIT_CODE)
     }
 
     /// The `gh` token was asked for a request whose URL is not
