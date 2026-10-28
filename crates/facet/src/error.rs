@@ -3,7 +3,9 @@
 //! `blob_not_found`, `run_not_found`, `session_not_found`, `session_not_set`,
 //! `invalid_sql`, and `sql_read_only`.
 
-use facet_record::{HydrateError, PolicyError, Redactor, child::ChildError};
+use facet_record::{
+    HydrateError, PolicyError, Redactor, child::ChildError, file_root::FileRootError,
+};
 use lattice::LatticeError;
 use probe_core::EnvironmentResolutionError;
 use probe_http::HttpError;
@@ -245,6 +247,19 @@ impl FacetError {
     /// file. The message names the program and variable, never a path.
     pub(crate) fn subprocess(error: &ChildError) -> Self {
         Self::new(error.category(), error.to_string(), CONFIGURATION_EXIT_CODE)
+    }
+
+    /// A file body or multipart file part of `selector` resolves outside the
+    /// collection root, is missing, or has no root to resolve against.
+    /// Refused before anything is sent. Names the request and the reason,
+    /// never the path.
+    pub(crate) fn file_body_outside_root(selector: &str, error: FileRootError) -> Self {
+        Self::new(
+            error.category(),
+            format!("{error} (request {selector})"),
+            CONFIGURATION_EXIT_CODE,
+        )
+        .with_details(json!({ "request": selector, "reason": error.reason() }))
     }
 
     /// The `gh` token was asked for a request whose URL is not

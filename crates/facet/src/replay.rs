@@ -24,8 +24,8 @@ use crate::{
     CommandOutput, FacetError, args,
     expect::{EXPECT_FAIL_TAG, Expectation},
     run::{
-        add_auth_token, case_warnings, hydrate, lookup_request, parse_vars, policy_for, render,
-        resolve_selected, send, var_names, with_secrets,
+        add_auth_token, case_warnings, confine_files, hydrate, lookup_request, parse_vars,
+        policy_for, render, resolve_selected, send, var_names, with_secrets,
     },
     workspace::{WorkspaceInput, load, open_store, overrides_from_parsed},
 };
@@ -43,6 +43,7 @@ const SWITCH_FLAGS: &[&str] = &[
     "--strict-variables",
     "--no-record",
     "--no-subprocess",
+    "--allow-file-outside-root",
 ];
 
 pub(crate) fn replay(args: &[String], stdin: &mut impl Read) -> Result<CommandOutput, FacetError> {
@@ -80,6 +81,7 @@ fn replay_unredacted(
         ));
     };
     let frozen = parsed.switch("--frozen");
+    let allow_outside = parsed.switch("--allow-file-outside-root");
     let strict_variables = parsed.switch("--strict-variables");
     let should_record = !parsed.switch("--no-record") && !recording_disabled();
     let overrides = overrides_from_parsed(&parsed)?;
@@ -187,8 +189,16 @@ fn replay_unredacted(
         ));
     }
 
-    // 5. Send and record with lineage.
-    let execution = send(&request, &hydration, input.base_directory(), None)?;
+    // 5. Check file bodies against the root, then send and record with
+    // lineage.
+    let sendable = confine_files(&request, Some(base.as_path()), selector, allow_outside).map_err(
+        |mut error| {
+            let details = error.details.get_or_insert_with(|| json!({}));
+            details["replayedFrom"] = json!(row.id);
+            error
+        },
+    )?;
+    let execution = send(&sendable, &hydration, input.base_directory(), None)?;
     let status = execution
         .result
         .as_ref()

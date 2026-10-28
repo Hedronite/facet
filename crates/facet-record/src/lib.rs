@@ -8,6 +8,7 @@
 
 pub mod child;
 mod diff;
+pub mod file_root;
 mod github;
 mod hydrate;
 mod policy;
