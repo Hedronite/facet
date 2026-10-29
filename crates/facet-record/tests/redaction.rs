@@ -182,14 +182,11 @@ impl Sandbox {
 
     fn facet(&self) -> Command {
         let root = self.dir.path();
-        let path = format!(
-            "{}:{}",
-            root.join("bin").display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
         let mut command = Command::new(common::bins::shipped("facet"));
         command
-            .env("PATH", path)
+            .env("FACET_GH", root.join("bin").join("gh"))
+            .env_remove("FACET_GIT")
+            .env_remove("FACET_NO_SUBPROCESS")
             .env("FACET_DATA_DIR", root.join("machine"))
             .env("FACET_CONFIG_DIR", root.join("config"))
             // Encrypted secrets backend: deterministic, no OS keyring prompts.

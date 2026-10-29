@@ -60,6 +60,27 @@ separate version axes and do not move with this release.
   transport (no redirects, no `HTTP_PROXY` / `HTTPS_PROXY`). Earlier, the
   token went to whatever host the collection named, with redirects and the
   env proxy allowed. A `--var githubToken=…` is sent as before.
+- Facet starts `gh` and `git` only from a fixed list of absolute paths, or
+  from `FACET_GH` / `FACET_GIT` set to an absolute path to an existing
+  regular file, and never searches `PATH`. A relative or missing override
+  fails `subprocess_path_refused` (exit 5) before spawn, without naming the
+  path. With no override and no program at a listed location, the run
+  gets no token or no `git:` tag, as before. Each child gets a cleared
+  environment with only `HOME`, `GH_CONFIG_DIR` (when set) and
+  `PATH=/usr/bin:/bin`. Earlier, both came from `PATH` with the whole
+  environment.
+- `--no-subprocess` on `request run` and `replay`, and `FACET_NO_SUBPROCESS`
+  (any non-empty value, honoured by the TUI and MCP too), start no child:
+  no `gh auth token`, no `gh api` fallback, and no `git:` tag on a recorded
+  run. `{{githubToken}}` with no `--var githubToken=…` then fails
+  `subprocess_disabled` (exit 5) before anything is sent; the host check
+  still runs first. `facet doctor` shows the switch.
+- The `gh api` fallback runs only for an open send to exactly
+  `https://api.github.com`, never for a locked send, and puts no sensitive
+  header and no known secret value on the argv of `gh`. Earlier, a URL that
+  only began with `https://api.github.com` (such as `api.github.com.invalid`)
+  could fall back too. A `{{githubToken}}` request that passes the host
+  check is locked before `gh` is asked.
 - Security: every GitHub Action in CI and release is pinned to a full commit SHA, and scripts/check-action-pins.sh enforces this in CI. Release builds and tests run with --locked. Each release asset and SHA256SUMS carries a keyless build provenance attestation; verify a download with gh attestation verify <asset> --repo Hedronite/facet.
 
 ### Fixed

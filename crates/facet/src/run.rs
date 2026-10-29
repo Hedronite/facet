@@ -10,8 +10,9 @@ use std::{
 };
 
 use facet_record::{
-    Hydration, RecordPolicy, RecordRequest, Recording, Redactor, actor_from_env, overlay_secrets,
-    record, record_policy, recording_disabled, request_preview_json, session_from_env,
+    Hydration, RecordPolicy, RecordRequest, Recording, Redactor, actor_from_env, child::ChildError,
+    overlay_secrets, record, record_policy, recording_disabled, request_preview_json,
+    session_from_env,
 };
 use lattice::now_ms;
 use probe_core::{
@@ -38,7 +39,12 @@ const VALUE_FLAGS: &[&str] = &[
     "--inline-body-max",
     "--history-retention",
 ];
-const SWITCH_FLAGS: &[&str] = &["--strict-variables", "--no-record", "--dry-run"];
+const SWITCH_FLAGS: &[&str] = &[
+    "--strict-variables",
+    "--no-record",
+    "--dry-run",
+    "--no-subprocess",
+];
 
 /// One executed request: when it started, how long it took, and the outcome.
 pub(crate) struct Execution {
@@ -65,6 +71,9 @@ fn run_unredacted(
     redactor: &mut Redactor,
 ) -> Result<CommandOutput, FacetError> {
     let parsed = args::parse(args, VALUE_FLAGS, SWITCH_FLAGS)?;
+    if parsed.switch("--no-subprocess") {
+        facet_record::child::disable();
+    }
     let [path, selector] = parsed.positionals() else {
         return Err(FacetError::invalid_arguments(
             "request run requires <path> and <selector>",
@@ -315,8 +324,10 @@ pub(crate) fn policy_for(
 /// The `githubToken` the request's Authorization header references, from
 /// `gh`, merged last and added to the values the run redacts. The token
 /// goes only to `https://api.github.com`: any other rendered URL fails
-/// `github_token_host_refused` before `gh` runs. Once injected, the request
-/// is a secret request and sends locked.
+/// `github_token_host_refused` before `gh` runs. A request that passes the
+/// host check is a secret request and sends locked, before `gh` is asked.
+/// With child processes off (`--no-subprocess`, `FACET_NO_SUBPROCESS`) it
+/// then fails `subprocess_disabled`, before anything is sent.
 pub(crate) fn add_auth_token(
     loaded: &LoadedWorkspace,
     request: &HttpRequest,
@@ -336,15 +347,20 @@ pub(crate) fn add_auth_token(
     if !is_github_api(url) {
         return Err(FacetError::github_token_host_refused(url_host(url)));
     }
-    if let Some(token) = facet_record::auth_token_for(request, merged_variables) {
+    if !hydration.lock.is_locked() {
+        hydration.lock = TransportLock::SecretReferenced;
+    }
+    hydration.references_secret = true;
+    if facet_record::child::disabled() {
+        return Err(FacetError::subprocess(&ChildError::Disabled));
+    }
+    let token = facet_record::auth_token_for(request, merged_variables)
+        .map_err(|error| FacetError::subprocess(&error))?;
+    if let Some(token) = token {
         merged_variables.push(("githubToken".to_owned(), token.clone()));
         hydration.redact.push(token);
         hydration.hydrated.push("githubToken".to_owned());
         hydration.source = Some("gh");
-        if !hydration.lock.is_locked() {
-            hydration.lock = TransportLock::SecretReferenced;
-        }
-        hydration.references_secret = true;
     }
     Ok(())
 }
@@ -449,19 +465,27 @@ pub(crate) fn var_names(variables: &[(String, String)]) -> Vec<String> {
     variables.iter().map(|(name, _)| name.clone()).collect()
 }
 
-/// Sends `request` for `run` and `replay`: [`execute_locked`] for a secret
-/// request (including one carrying the `gh` token), [`execute`] otherwise.
+/// Sends `request` for `run` and `replay`. A secret request (including one
+/// carrying the `gh` token) takes the locked transport: redirects off, proxy
+/// environment ignored, and no `gh api` fallback.
 pub(crate) fn send(
     request: &HttpRequest,
     hydration: &Hydration,
     base_directory: Option<PathBuf>,
     output: Option<&Path>,
 ) -> Result<Execution, FacetError> {
-    if hydration.references_secret {
-        execute_locked(request, base_directory, output)
-    } else {
-        execute(request, base_directory, output)
-    }
+    let lock = match hydration.lock {
+        TransportLock::Open if hydration.references_secret => TransportLock::SecretReferenced,
+        lock => lock,
+    };
+    execute_transport(
+        request,
+        base_directory,
+        output,
+        hydration.references_secret,
+        lock,
+        &hydration.redact,
+    )
 }
 
 /// Executes one resolved request on a fresh single-thread runtime, with
@@ -471,23 +495,25 @@ pub(crate) fn execute(
     base_directory: Option<PathBuf>,
     output: Option<&Path>,
 ) -> Result<Execution, FacetError> {
-    execute_transport(request, base_directory, output, false)
+    execute_transport(
+        request,
+        base_directory,
+        output,
+        false,
+        TransportLock::Open,
+        &[],
+    )
 }
 
-/// Secret-request send: redirects off, proxy environment ignored.
-pub(crate) fn execute_locked(
-    request: &HttpRequest,
-    base_directory: Option<PathBuf>,
-    output: Option<&Path>,
-) -> Result<Execution, FacetError> {
-    execute_transport(request, base_directory, output, true)
-}
-
+/// `lock` and `known` go to `api_fallback`, which stays off unless `lock` is
+/// `Open` and keeps every `known` value off `gh`'s argv.
 fn execute_transport(
     request: &HttpRequest,
     base_directory: Option<PathBuf>,
     output: Option<&Path>,
     lock_transport: bool,
+    lock: TransportLock,
+    known: &[String],
 ) -> Result<Execution, FacetError> {
     let options = ExecutionOptions {
         base_directory,
@@ -529,7 +555,7 @@ fn execute_transport(
         }
     });
     if result.is_err()
-        && let Some(Ok(response)) = facet_record::api_fallback(request)
+        && let Some(Ok(response)) = facet_record::api_fallback(request, lock, known)
     {
         result = Ok(response);
     }
@@ -623,7 +649,7 @@ mod tests {
     /// What the stub `gh auth token` prints: a canary, never a credential.
     const GH_TOKEN: &str = "fn2-unit-gh-canary";
     /// Set only in the child process [`gh_token_is_injected_only_for_github_api`]
-    /// starts with the stub `gh` first on `PATH`.
+    /// starts with the stub `gh` at `FACET_GH`.
     const CHILD: &str = "FACET_FN2_STUB_GH_MARKER";
 
     const COLLECTION: &str = r#"opencollection: 1.0.0
@@ -701,9 +727,9 @@ items:
         ));
     }
 
-    /// Runs [`stub_gh_child`] in a child process with a stub `gh` first on
-    /// `PATH`: the test never changes its own environment and never touches
-    /// the network.
+    /// Runs [`stub_gh_child`] in a child process with a stub `gh` at
+    /// `FACET_GH`: the test never changes its own environment and never
+    /// touches the network.
     #[test]
     fn gh_token_is_injected_only_for_github_api() {
         let dir = tempfile::tempdir().unwrap();
@@ -718,15 +744,11 @@ items:
         )
         .unwrap();
         std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let path = format!(
-            "{}:{}",
-            dir.path().display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
         let child = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "run::tests::stub_gh_child", "--ignored"])
             .args(["--nocapture", "--test-threads=1"])
-            .env("PATH", path)
+            .env("FACET_GH", &gh)
+            .env_remove("FACET_NO_SUBPROCESS")
             .env(CHILD, &marker)
             .output()
             .unwrap();
@@ -773,7 +795,7 @@ items:
 
         // https://api.github.com: gh runs, the token is merged last and
         // redacted, and the request becomes a locked secret request, which
-        // `send` gives to `execute_locked` for run and replay alike.
+        // `send` sends on the locked transport for run and replay alike.
         let mut hydration = Hydration::default();
         let mut merged = vec![("base".to_owned(), "https://API.github.com".to_owned())];
         add_auth_token(&loaded, request, None, &mut hydration, &mut merged)
