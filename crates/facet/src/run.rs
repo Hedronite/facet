@@ -10,7 +10,9 @@ use std::{
 };
 
 use facet_record::{
-    Hydration, RecordPolicy, RecordRequest, Recording, Redactor, actor_from_env, child::ChildError,
+    Hydration, RecordPolicy, RecordRequest, Recording, Redactor, actor_from_env,
+    child::ChildError,
+    file_root::{self, Outside},
     overlay_secrets, record, record_policy, recording_disabled, request_preview_json,
     session_from_env,
 };
@@ -44,6 +46,7 @@ const SWITCH_FLAGS: &[&str] = &[
     "--no-record",
     "--dry-run",
     "--no-subprocess",
+    "--allow-file-outside-root",
 ];
 
 /// One executed request: when it started, how long it took, and the outcome.
@@ -96,6 +99,7 @@ fn run_unredacted(
         .map(Expectation::parse)
         .transpose()?;
     let dry_run = parsed.switch("--dry-run");
+    let allow_outside = parsed.switch("--allow-file-outside-root");
     if dry_run && (expect.is_some() || output.is_some()) {
         return Err(FacetError::invalid_arguments(
             "--dry-run sends nothing; it cannot be combined with --expect or --output",
@@ -129,6 +133,7 @@ fn run_unredacted(
         &merged_variables,
         strict_variables,
     )?;
+    let sendable = confine_files(&request, base.as_deref(), selector, allow_outside)?;
     if dry_run {
         let preview = dry_run_output(&request, &hydration, environment.is_some());
         return Ok(case_warnings(&hydration)
@@ -136,7 +141,7 @@ fn run_unredacted(
             .fold(preview, CommandOutput::warn));
     }
     let execution = send(
-        &request,
+        &sendable,
         &hydration,
         input.base_directory(),
         output.as_deref(),
@@ -463,6 +468,26 @@ pub(crate) fn parse_vars(parsed: &args::Parsed) -> Result<Vec<(String, String)>,
 /// The names of the `--var` overrides, in order; values never leave here.
 pub(crate) fn var_names(variables: &[(String, String)]) -> Vec<String> {
     variables.iter().map(|(name, _)| name.clone()).collect()
+}
+
+/// The request as sent: every file body and multipart file part checked
+/// against the collection root by [`file_root::confine`] and rewritten to its
+/// canonical path. The caller keeps `request` for its hash, preview and
+/// record. `allow_outside` is `--allow-file-outside-root`, which only
+/// `request run` and `replay` take; the TUI and MCP never pass it.
+pub(crate) fn confine_files(
+    request: &HttpRequest,
+    base_directory: Option<&Path>,
+    selector: &str,
+    allow_outside: bool,
+) -> Result<HttpRequest, FacetError> {
+    let outside = if allow_outside {
+        Outside::Allow
+    } else {
+        Outside::Refuse
+    };
+    file_root::confine(request, base_directory, outside)
+        .map_err(|error| FacetError::file_body_outside_root(selector, error))
 }
 
 /// Sends `request` for `run` and `replay`. A secret request (including one

@@ -82,6 +82,18 @@ separate version axes and do not move with this release.
   could fall back too. A `{{githubToken}}` request that passes the host
   check is locked before `gh` is asked.
 - Security: every GitHub Action in CI and release is pinned to a full commit SHA, and scripts/check-action-pins.sh enforces this in CI. Release builds and tests run with --locked. Each release asset and SHA256SUMS carries a keyless build provenance attestation; verify a download with gh attestation verify <asset> --repo Hedronite/facet.
+- A file body or multipart file part is sent only from inside the
+  collection directory. Before anything is sent, on `request run`,
+  `--dry-run`, `replay`, the TUI and MCP, its path is canonicalized and
+  compared by component against the canonical collection directory, and
+  the request is sent with the canonical path. A path outside it (`..`, an
+  absolute path or a symlink), a missing file, or a collection read from
+  stdin fails `file_body_outside_root` (exit 5) without naming the path.
+  `--allow-file-outside-root` on `request run` and `replay` lets an outside
+  file through; the TUI and MCP always refuse. Earlier, any path the
+  collection named was read and sent. A file swapped inside the collection
+  directory between the check and the open is still sent; see
+  `docs/FACET.md`.
 
 ### Fixed
 
@@ -95,6 +107,7 @@ separate version axes and do not move with this release.
   any source; when no environment is selected and the request references a
   `--var`; and when secret discovery fails. `facet`, `probe` and the TUI
   decide this with one shared rule.
+- Fixed: the TUI no longer drops file, form and multipart bodies on send and on save. It used to send them empty and delete them from the collection YAML. TUI sends now confine file bodies to the collection folder like the CLI (`file_body_outside_root`).
 
 ## [0.7.0] - 2026-10-25
 

@@ -319,7 +319,7 @@ see [Cluster transport](CLUSTER-TRANSPORT.md). Configure credentials through an
 explicit project kubeconfig, separately from canonical collection YAML.
 
 ```text
-facet request run <path> <selector> [<probe request run flags>] [--no-record] [--no-subprocess] [--tag <tag>]... [--expect <codes>] [--dry-run] [--inline-body-max <size>] [--json]
+facet request run <path> <selector> [<probe request run flags>] [--no-record] [--no-subprocess] [--allow-file-outside-root] [--tag <tag>]... [--expect <codes>] [--dry-run] [--inline-body-max <size>] [--json]
 facet history [<path>] [--limit <n>] [--request <selector>] [--status <code>] [--actor <name>] [--since <unix-ms>] [--session <id>|current] [--environment <name>] [--tag <tag>]... [--hash <sha256>] [--bodies] [--json]
 facet history [<path>] --id <ulid> [--bodies] [--json]
 facet last [<path>] [--request <selector>] [--status <code>] [--actor <name>] [--since <unix-ms>] [--session <id>|current] [--environment <name>] [--tag <tag>]... [--hash <sha256>] [--bodies] [--json]
@@ -332,7 +332,7 @@ facet session start [--actor <name>] [--meta <json>] [--json]
 facet session end [<id>|current] [--json]
 facet session list [--limit <n>] [--actor <name>] [--open] [--json]
 facet session show <id>|current [--json]
-facet replay <runId> [<path>] [--frozen] [--environment <name>] [--var k=v]... [--tag <tag>]... [--expect <codes>] [--strict-variables] [--no-record] [--no-subprocess] [--json]
+facet replay <runId> [<path>] [--frozen] [--environment <name>] [--var k=v]... [--tag <tag>]... [--expect <codes>] [--strict-variables] [--no-record] [--no-subprocess] [--allow-file-outside-root] [--json]
 facet diff <idA> <idB> [<path>] [--bodies] [--json]
 facet env set [<path>] --environment <name> --name <key> --value <value> [--secret] [--json]
 facet env list [<path>] [--environment <name>] [--json]
@@ -719,6 +719,41 @@ recorded run).
   (the same origin rule as the token). Never for a locked send. A header
   named in the sensitive list, or one whose value holds a known secret,
   never goes on the argv of `gh`.
+
+#### File bodies stay under the collection root
+
+Before anything is sent, on `request run`, `--dry-run`, `replay`, the TUI
+and MCP, every file Facet would send is checked:
+
+- the selected file of a `type: file` body;
+- every enabled `type: file` part of a `multipart-form` body.
+
+Each path is resolved the way the HTTP engine resolves it: relative to the
+directory beside the collection, or as given when absolute. It is then
+canonicalized, so `..` and symlinks are followed. It must be a regular file
+inside the canonical collection directory, compared by path component (a
+sibling `/a/bc` is not inside `/a/b`). The request is then sent with that
+canonical path.
+
+Anything else fails `file_body_outside_root` (exit 5) before the send. That
+covers a path outside the collection directory (through `..`, an absolute
+path or a symlink), a missing file, or a collection read from stdin, which
+has no directory. `details.request` names the request and `details.reason`
+is `outside_root`, `missing` or `no_base`; the error never names the path.
+
+`--allow-file-outside-root` on `request run` and `replay` lets a file
+outside the collection directory through, still canonicalized; a missing
+file is still refused. The TUI and MCP have no such switch and always
+refuse. The recorded request and its `requestHash` keep the path as the
+collection wrote it.
+
+Residual: the check and the HTTP engine's open are two separate steps.
+Someone who can write inside the collection directory can replace the
+checked file, or a directory on its path, with a symlink to a file outside
+between the check and the open, and that file is then sent. Facet does not
+change the HTTP engine (`probe-http`) to open the checked file itself, so
+this window stays. Keep collection directories writable only by people
+trusted to choose what they send.
 
 `facet env` is Facet's machine-store CLI, not Probe's `environment` (which
 edits YAML and rejects secrets). `set` stores one value (`--secret` routes it

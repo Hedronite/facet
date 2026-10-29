@@ -957,18 +957,32 @@ impl App {
             .and_then(|loaded| loaded.source_path().map(|path| path.to_path_buf()))
     }
 
+    /// The directory file bodies resolve against: the source itself when it
+    /// is a directory, else the bundled file's parent, as the CLI does.
+    fn file_root_directory(&self) -> Option<std::path::PathBuf> {
+        let source = self.base_directory()?;
+        if source.is_dir() {
+            return Some(source);
+        }
+        Some(match source.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+            _ => std::path::PathBuf::from("."),
+        })
+    }
+
     /// Applies a `RequestUpdate` for the currently selected request, then
     /// persists the document.
     pub fn save_current(&mut self) -> Result<(), SaveError> {
-        let Some((key, _)) = self.selected_request() else {
+        let Some((key, request)) = self.selected_request() else {
             return Ok(());
         };
+        let original = body_kind(request);
         let loaded = self.loaded.as_mut().expect("workspace loaded");
         let selector = loaded
             .request_selector(key)
             .ok_or_else(|| SaveError::RequestNotFound("selected".to_string()))?
             .to_string();
-        let update = build_update(&self.method, &self.editor);
+        let update = build_update(&self.method, &self.editor, original);
         loaded.update_request(&selector, &update)?;
         let new_workspace = loaded.workspace().clone();
         self.tree.set_workspace(new_workspace);
@@ -3040,7 +3054,7 @@ impl App {
             return Err("no request selected".to_string());
         };
         let mut prepared = request.clone();
-        build_update(&self.method, &self.editor).apply(&mut prepared);
+        build_update(&self.method, &self.editor, body_kind(request)).apply(&mut prepared);
         let lock = self.send_lock(&prepared);
         if let Some(index) = self.active_environment {
             // A selection that no longer names a loaded environment cannot
@@ -3113,8 +3127,24 @@ impl App {
                 return Ok(());
             }
         };
+        // H7: every file body must sit under the collection root. The TUI
+        // has no outside-root flag, so it always refuses. The confined clone
+        // is what gets sent; the original stays for the record.
+        let file_root = self.file_root_directory();
+        let sendable = match facet_record::file_root::confine(
+            &request,
+            file_root.as_deref(),
+            facet_record::file_root::Outside::Refuse,
+        ) {
+            Ok(sendable) => sendable,
+            Err(error) => {
+                self.status =
+                    RunStatus::Failed(format!("{}: {}", error.category(), error.reason()));
+                return Ok(());
+            }
+        };
         let options = ExecutionOptions {
-            base_directory: self.base_directory(),
+            base_directory: file_root,
             response_cache: None,
         };
         let environment = self.active_environment_name().map(str::to_string);
@@ -3150,10 +3180,12 @@ impl App {
                     };
                     if lock.is_locked() {
                         engine
-                            .execute_cancellable_locked(&request, &options, cancel)
+                            .execute_cancellable_locked(&sendable, &options, cancel)
                             .await
                     } else {
-                        engine.execute_cancellable(&request, &options, cancel).await
+                        engine
+                            .execute_cancellable(&sendable, &options, cancel)
+                            .await
                     }
                 }
                 Err(error) => Err(error),
@@ -3713,7 +3745,10 @@ fn cycle_method(slot: &mut String) {
     *slot = next.to_string();
 }
 
-fn build_update(method: &str, editor: &Editor) -> RequestUpdate {
+/// `original` is the body kind the request has on disk. The editor cannot
+/// edit form, multipart or file bodies, so while it still shows that kind
+/// the request keeps its own body, for the send and for the save.
+fn build_update(method: &str, editor: &Editor, original: BodyKind) -> RequestUpdate {
     let headers: Vec<Header> = editor
         .header_rows
         .iter()
@@ -3769,6 +3804,10 @@ fn build_update(method: &str, editor: &Editor) -> RequestUpdate {
         ))),
         BodyKind::Form | BodyKind::Multipart | BodyKind::File => None,
     };
+    let keeps_own_body = matches!(
+        editor.body_kind,
+        BodyKind::Form | BodyKind::Multipart | BodyKind::File
+    ) && editor.body_kind == original;
     RequestUpdate {
         name: None,
         method: Some(method.to_string()),
@@ -3776,7 +3815,7 @@ fn build_update(method: &str, editor: &Editor) -> RequestUpdate {
         headers: Some(headers),
         query_parameters: Some(query),
         path_parameters: Some(path),
-        body: Some(body),
+        body: if keeps_own_body { None } else { Some(body) },
         authentication: None,
     }
 }
@@ -5547,6 +5586,132 @@ mod tests {
         let recording = app.last_recording().expect("record was consulted");
         assert_eq!(recording.note, "recorded", "{recording:?}");
         assert!(recording.run_id.is_some(), "{recording:?}");
+    }
+
+    /// A bundled collection in its own temp dir whose one request sends
+    /// the file at `file_path` as its body.
+    async fn app_with_file_body(tag: &str, url: &str, file_path: &str) -> (PathBuf, App) {
+        let dir = unique_temp_dir(&format!("facet-tui-{tag}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let yaml = dir.join("collection.yml");
+        std::fs::write(
+            &yaml,
+            format!(
+                "opencollection: 1.0.0\n\
+                 info:\n  name: Files\n\
+                 bundled: true\n\
+                 items:\n\
+                 \x20 - info:\n      name: Upload\n      type: http\n      seq: 1\n\
+                 \x20   http:\n      method: POST\n      url: {url}\n\
+                 \x20     body:\n        type: file\n        data:\n\
+                 \x20         - filePath: {file_path}\n            contentType: text/plain\n            selected: true\n"
+            ),
+        )
+        .unwrap();
+        drop(WorkspaceStore::open(&dir, LatticeConfig::default()).unwrap());
+        let app = App::load(Some(&yaml)).await;
+        assert!(
+            app.selected_request().is_some(),
+            "collection loads; status {:?}",
+            app.status
+        );
+        (dir, app)
+    }
+
+    /// H7: a file body outside the collection root never reaches the
+    /// network, through `..` or an absolute path. The TUI has no flag to
+    /// let it through, and the status names neither the path nor the file.
+    #[tokio::test]
+    async fn file_body_outside_root_stops_the_send() {
+        let outside = unique_temp_dir("facet-tui-outside-canary");
+        std::fs::create_dir_all(&outside).unwrap();
+        let secret = outside.join("secret-canary.txt");
+        std::fs::write(&secret, "outside-canary-bytes").unwrap();
+        let outside_name = outside.file_name().unwrap().to_str().unwrap().to_string();
+        for (tag, file_path) in [
+            (
+                "file-dotdot",
+                format!("../{outside_name}/secret-canary.txt"),
+            ),
+            ("file-absolute", secret.display().to_string()),
+        ] {
+            // Nothing listens here; the send must never be attempted.
+            let (dir, mut app) =
+                app_with_file_body(tag, "http://127.0.0.1:9/never", &file_path).await;
+
+            app.run_selected().await.unwrap();
+
+            assert!(!app.is_in_flight(), "{tag}: nothing was sent");
+            let RunStatus::Failed(message) = &app.status else {
+                panic!("{tag}: expected a failed status, got {:?}", app.status);
+            };
+            assert!(
+                message.starts_with("file_body_outside_root"),
+                "{tag}: {message}"
+            );
+            assert!(message.contains("outside_root"), "{tag}: {message}");
+            assert!(!message.contains("secret-canary"), "{tag}: {message}");
+            assert!(!message.contains(&outside_name), "{tag}: {message}");
+            assert!(app.last_recording().is_none(), "{tag}");
+            assert_eq!(stored_runs(&dir), 0, "{tag}");
+            std::fs::remove_dir_all(&dir).ok();
+        }
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    /// H7: a relative file body inside a bundled collection resolves
+    /// against the collection directory, and its bytes are sent.
+    #[tokio::test]
+    async fn file_body_inside_root_is_sent() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/upload", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut seen = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            while !String::from_utf8_lossy(&seen).contains("inside-root-bytes") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => seen.extend_from_slice(&buffer[..n]),
+                }
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok")
+                .unwrap();
+            seen
+        });
+        let (dir, mut app) = app_with_file_body("file-inside", &url, "./body.txt").await;
+        std::fs::write(dir.join("body.txt"), "inside-root-bytes").unwrap();
+
+        app.run_selected().await.unwrap();
+        finish_send(&mut app).await;
+        let seen = server.join().expect("the request reached the server");
+
+        assert!(
+            matches!(app.status, RunStatus::Done { status: 200, .. }),
+            "{:?}",
+            app.status
+        );
+        assert!(
+            String::from_utf8_lossy(&seen).contains("inside-root-bytes"),
+            "body bytes were sent"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The editor cannot edit a file body, so a save keeps it on disk.
+    #[tokio::test]
+    async fn save_keeps_a_file_body() {
+        let (dir, mut app) =
+            app_with_file_body("file-save", "http://127.0.0.1:9/never", "./body.txt").await;
+        app.save_current().unwrap();
+        let yaml = std::fs::read_to_string(dir.join("collection.yml")).unwrap();
+        assert!(yaml.contains("body.txt"), "{yaml}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// FN-1: with an environment selected, a variable the YAML declares

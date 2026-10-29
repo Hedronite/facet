@@ -250,6 +250,7 @@ pub const fn help() -> &'static str {
         "      --expect <codes>        Assert the status: 200,201 or 2xx; miss is exit 1 expect_failed\n",
         "      --dry-run               Resolve and preview the request without sending or recording\n",
         "      --no-subprocess         Start no gh or git child (request run, replay); {{githubToken}} needs --var\n",
+        "      --allow-file-outside-root Send a file body from outside the collection root (request run, replay)\n",
         "      --tag <tag>             Tag the recorded run, or filter history by tag (AND); may be repeated\n",
         "      --inline-body-max <n>   Inline bodies at or under this size (e.g. 64KiB)\n",
         "      --history-retention <r> Retention window for gc (unlimited or e.g. 30d)\n",
