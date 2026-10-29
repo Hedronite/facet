@@ -17,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.95.0
           components: clippy, rustfmt
@@ -32,7 +32,7 @@ jobs:
         run: ./scripts/version-check.sh --tag "$GITHUB_REF_NAME"
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-targets --all-features
+      - run: cargo test --locked --workspace --all-targets --all-features
 
   build-cli:
     name: Build CLI (${{ matrix.platform }})
@@ -54,14 +54,14 @@ jobs:
             archive: tar.gz
 
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: 1.95.0
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
       - name: Build facet CLI
-        run: cargo build --release -p facet-cli --bin facet --target ${{ matrix.target }}
+        run: cargo build --locked --release -p facet-cli --bin facet --target ${{ matrix.target }}
       - name: Set package metadata
         id: metadata
         shell: bash
@@ -103,7 +103,7 @@ jobs:
             -DestinationPath "dist/${{ steps.metadata.outputs.asset_name }}.zip" `
             -Force
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-cli-${{ matrix.platform }}
           path: dist/${{ steps.metadata.outputs.asset_name }}.${{ matrix.archive }}
@@ -116,11 +116,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Keyless build provenance (Sigstore via GitHub OIDC), publish only.
+      id-token: write
+      attestations: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download release artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: release-*
           path: dist
@@ -129,17 +132,27 @@ jobs:
         run: |
           cd dist
           sha256sum * > SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          notes="Release for Facet $GITHUB_REF_NAME.
+
+          Every asset and SHA256SUMS carries a signed build provenance
+          attestation. Verify a download before you run it:
+
+              gh attestation verify <asset> --repo $GITHUB_REPOSITORY"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               --verify-tag \
               --title "Facet $GITHUB_REF_NAME" \
-              --notes "Release for Facet $GITHUB_REF_NAME." \
+              --notes "$notes" \
               dist/*
           fi

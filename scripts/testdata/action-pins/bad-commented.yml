@@ -1,0 +1,10 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # The commented-out pinned line below must not count, and a SHA
+      # that sits only in the trailing comment is not a pin.
+      # - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7 # 3d3c42e5aac5ba805825da76410c181273ba90b1
