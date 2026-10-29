@@ -681,7 +681,7 @@ fn replay_that_needs_gh_with_the_switch_fails_before_send() {
 /// fixed `gh` locations, so the shipped binary finds no `gh` at any of them
 /// while every other path, the stubs included, stays readable. Linux has
 /// no unprivileged equivalent, so the two tests below run on macOS only
-/// (tower and the macOS CI leg).
+/// (macOS hosts and the macOS CI leg).
 #[cfg(target_os = "macos")]
 fn without_fixed_gh(command: &Command) -> Command {
     const PROFILE: &str = r#"(version 1)(allow default)(deny file-read* (literal "/opt/homebrew/bin/gh") (literal "/usr/local/bin/gh") (literal "/usr/bin/gh"))"#;
