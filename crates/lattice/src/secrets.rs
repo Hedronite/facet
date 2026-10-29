@@ -33,6 +33,7 @@ use chacha20poly1305::{Key, KeyInit, XChaCha20Poly1305, XNonce, aead::Aead};
 use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
+use zeroize::Zeroizing;
 
 /// Prefix marking a keyring reference in `environments.secret_ref`.
 pub const KEYRING_REF_PREFIX: &str = "kr:";
@@ -174,7 +175,7 @@ pub fn put_secret(value: &str) -> Result<StoredSecret, SecretError> {
 }
 
 /// Resolves a `secret_ref` back to the secret value using the environment key.
-pub fn get_secret(reference: &str) -> Result<Option<String>, SecretError> {
+pub fn get_secret(reference: &str) -> Result<Option<Zeroizing<String>>, SecretError> {
     get_secret_with(reference, &SecretConfig::from_env()?)
 }
 
@@ -209,7 +210,7 @@ pub fn put_secret_with(value: &str, config: &SecretConfig) -> Result<StoredSecre
 pub fn get_secret_with(
     reference: &str,
     config: &SecretConfig,
-) -> Result<Option<String>, SecretError> {
+) -> Result<Option<Zeroizing<String>>, SecretError> {
     if reference.is_empty() {
         return Ok(None);
     }
@@ -217,7 +218,7 @@ pub fn get_secret_with(
         let entry = keyring::Entry::new(KEYRING_SERVICE, user)
             .map_err(|error| SecretError::Keyring(error.to_string()))?;
         return match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
+            Ok(value) => Ok(Some(Zeroizing::new(value))),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(error) => Err(SecretError::Keyring(error.to_string())),
         };
@@ -227,10 +228,12 @@ pub fn get_secret_with(
             .master_key
             .as_ref()
             .ok_or(SecretError::NoSecretStore)?;
-        let bytes = decrypt_secret(key, payload)?;
-        let value = String::from_utf8(bytes)
+        // The decrypted bytes pass through `from_utf8` plain: the value the
+        // store hands out — the return of `get_secret_with` — is always
+        // `Zeroizing`.
+        let value = String::from_utf8(decrypt_secret(key, payload)?)
             .map_err(|error| SecretError::BadCiphertext(error.to_string()))?;
-        return Ok(Some(value));
+        return Ok(Some(Zeroizing::new(value)));
     }
     Err(SecretError::UnknownRef(reference.to_owned()))
 }
@@ -363,7 +366,8 @@ mod tests {
         assert_eq!(
             get_secret_with(&stored.reference, &config)
                 .unwrap()
-                .as_deref(),
+                .as_deref()
+                .map(|value| value.as_str()),
             Some("hunter2")
         );
         assert_eq!(
@@ -376,7 +380,8 @@ mod tests {
         assert_eq!(
             get_secret_with(&again.reference, &config)
                 .unwrap()
-                .as_deref(),
+                .as_deref()
+                .map(|value| value.as_str()),
             Some("hunter2")
         );
         delete_secret_with(&stored.reference, &config).unwrap();

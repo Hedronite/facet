@@ -10,7 +10,7 @@ use std::{
 };
 
 use facet_record::{
-    Hydration, RecordPolicy, RecordRequest, Recording, Redactor, actor_from_env,
+    Hydration, RecordPolicy, RecordRequest, Recording, Redactor, Zeroizing, actor_from_env,
     child::ChildError,
     file_root::{self, Outside},
     overlay_secrets, record, record_policy, recording_disabled, request_preview_json,
@@ -125,7 +125,7 @@ fn run_unredacted(
         &mut hydration,
         &mut merged_variables,
     )?;
-    *redactor = Redactor::new(hydration.redact.iter().cloned());
+    *redactor = Redactor::new(hydration.redact.iter().map(|value| value.to_string()));
     let request = resolve_selected(
         &loaded,
         raw,
@@ -362,7 +362,7 @@ pub(crate) fn add_auth_token(
     let token = facet_record::auth_token_for(request, merged_variables)
         .map_err(|error| FacetError::subprocess(&error))?;
     if let Some(token) = token {
-        merged_variables.push(("githubToken".to_owned(), token.clone()));
+        merged_variables.push(("githubToken".to_owned(), token.to_string()));
         hydration.redact.push(token);
         hydration.hydrated.push("githubToken".to_owned());
         hydration.source = Some("gh");
@@ -538,7 +538,7 @@ fn execute_transport(
     output: Option<&Path>,
     lock_transport: bool,
     lock: TransportLock,
-    known: &[String],
+    known: &[Zeroizing<String>],
 ) -> Result<Execution, FacetError> {
     let options = ExecutionOptions {
         base_directory,
@@ -830,7 +830,12 @@ items:
             token(&merged),
             "the gh token should be in the merged variables"
         );
-        assert!(hydration.redact.iter().any(|value| value == GH_TOKEN));
+        assert!(
+            hydration
+                .redact
+                .iter()
+                .any(|value| value.as_str() == GH_TOKEN)
+        );
         assert_eq!(hydration.hydrated, ["githubToken"]);
         assert_eq!(hydration.source, Some("gh"));
         assert_eq!(hydration.lock, TransportLock::SecretReferenced);

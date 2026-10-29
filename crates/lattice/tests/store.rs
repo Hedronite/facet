@@ -662,7 +662,8 @@ fn environments_round_trip_plain_and_secret() {
         machine
             .environment_with(wsid, "local", "API_URL", &SecretConfig::keyring())
             .unwrap()
-            .as_deref(),
+            .as_deref()
+            .map(String::as_str),
         Some("http://x")
     );
 
@@ -675,7 +676,8 @@ fn environments_round_trip_plain_and_secret() {
         machine
             .environment_with(wsid, "local", "API_TOKEN", &key_cfg)
             .unwrap()
-            .as_deref(),
+            .as_deref()
+            .map(String::as_str),
         Some("tok-123")
     );
 
@@ -708,7 +710,8 @@ fn environments_round_trip_plain_and_secret() {
         machine
             .environment_with(wsid, "local", "API_TOKEN", &key_cfg)
             .unwrap()
-            .as_deref(),
+            .as_deref()
+            .map(String::as_str),
         Some("plain-now")
     );
     assert!(

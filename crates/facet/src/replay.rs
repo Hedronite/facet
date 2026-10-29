@@ -162,7 +162,7 @@ fn replay_unredacted(
         details["replayedFrom"] = json!(row.id);
         error
     })?;
-    *redactor = Redactor::new(hydration.redact.iter().cloned());
+    *redactor = Redactor::new(hydration.redact.iter().map(|value| value.to_string()));
     let request = resolve_selected(
         &loaded,
         raw,

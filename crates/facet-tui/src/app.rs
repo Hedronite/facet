@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use facet_record::{ConfigOverrides, RecordPolicy, RecordRequest, Recording, record};
+use facet_record::{ConfigOverrides, RecordPolicy, RecordRequest, Recording, Zeroizing, record};
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use lattice::{
@@ -3049,7 +3049,7 @@ impl App {
     /// recorder scrubs from stored text), and its transport lock.
     fn prepared_request_with_redact(
         &self,
-    ) -> Result<(HttpRequest, Vec<String>, TransportLock), String> {
+    ) -> Result<(HttpRequest, Vec<Zeroizing<String>>, TransportLock), String> {
         let Some((_, request)) = self.selected_request() else {
             return Err("no request selected".to_string());
         };
@@ -3076,12 +3076,22 @@ impl App {
                 &[],
             )
             .map_err(|error| error.to_string())?;
+            // probe-core takes plain pairs: copy the values out for this one
+            // call, then wipe the copies before anything else runs.
+            let plain: Vec<(String, String)> = hydration
+                .overrides
+                .iter()
+                .map(|(name, value)| (name.clone(), value.to_string()))
+                .collect();
             let resolved = probe_core::resolve_environment_with_overrides(
                 loaded.workspace().environments(),
                 Some(&entry.name),
-                &hydration.overrides,
-            )
-            .map_err(|error| error.to_string())?;
+                &plain,
+            );
+            plain
+                .into_iter()
+                .for_each(|(_, value)| drop(Zeroizing::new(value)));
+            let resolved = resolved.map_err(|error| error.to_string())?;
             let lock = hydrated_lock(lock, hydration.lock);
             prepared = resolve_request(&prepared, &resolved).map_err(|error| error.to_string())?;
             return Ok((prepared, hydration.redact, lock));

@@ -16,6 +16,7 @@ use crate::{
 use crate::secrets::{
     SecretConfig, StoredSecret, backend_of, delete_secret_with, get_secret_with, put_secret_with,
 };
+use zeroize::Zeroizing;
 
 const MACHINE_MIGRATIONS: &[&str] = &[
     include_str!("../migrations/machine/0001_init.sql"),
@@ -419,15 +420,17 @@ impl MachineStore {
     }
 
     /// Reads one environment value, resolving secrets through the secrets
-    /// layer. Returns `None` when the row is absent. A secret whose backend
-    /// is unavailable (for example an encrypted ref with no `FACET_SECRET_KEY`)
-    /// surfaces as [`SecretError`] wrapped in [`LatticeError::Secret`].
+    /// layer. Returns `None` when the row is absent. Every value the store
+    /// hands out is `Zeroizing`, whether the row is plaintext or a
+    /// `secret_ref`. A secret whose backend is unavailable (for example an
+    /// encrypted ref with no `FACET_SECRET_KEY`) surfaces as [`SecretError`]
+    /// wrapped in [`LatticeError::Secret`].
     pub fn environment(
         &self,
         workspace_id: &str,
         name: &str,
         key: &str,
-    ) -> Result<Option<String>, LatticeError> {
+    ) -> Result<Option<Zeroizing<String>>, LatticeError> {
         self.environment_with(workspace_id, name, key, &SecretConfig::from_env()?)
     }
 
@@ -438,7 +441,7 @@ impl MachineStore {
         name: &str,
         key: &str,
         config: &SecretConfig,
-    ) -> Result<Option<String>, LatticeError> {
+    ) -> Result<Option<Zeroizing<String>>, LatticeError> {
         let row = match self.conn.query_row(
             "SELECT value, secret_ref FROM environments \
              WHERE workspace_id = ?1 AND name = ?2 AND key = ?3",
@@ -454,7 +457,7 @@ impl MachineStore {
         };
         match secret_ref {
             Some(reference) if !reference.is_empty() => Ok(get_secret_with(&reference, config)?),
-            _ => Ok(value),
+            _ => Ok(value.map(Zeroizing::new)),
         }
     }
 

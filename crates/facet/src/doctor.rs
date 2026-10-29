@@ -163,11 +163,10 @@ fn probe_secret_usable(config: &SecretConfig, warnings: &mut Vec<String>) -> boo
             let got = lattice::get_secret_with(&stored.reference, config);
             let _ = lattice::delete_secret_with(&stored.reference, config);
             match got {
-                Ok(Some(round_tripped)) if round_tripped == PROBE_VALUE => true,
-                Ok(other) => {
-                    warnings.push(format!(
-                        "secret backend round-trip mismatch (got {other:?}); marked unusable"
-                    ));
+                Ok(Some(round_tripped)) if round_tripped.as_str() == PROBE_VALUE => true,
+                Ok(_) => {
+                    // Never print what came back: it is a stored value.
+                    warnings.push("secret backend round-trip mismatch; marked unusable".to_owned());
                     false
                 }
                 Err(error) => {

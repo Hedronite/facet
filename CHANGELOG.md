@@ -94,6 +94,21 @@ separate version axes and do not move with this release.
   collection named was read and sent. A file swapped inside the collection
   directory between the check and the open is still sent; see
   `docs/FACET.md`.
+- `facet env set --value-stdin` reads the value from a pipe instead of
+  argv, where other processes on the machine can see it, and strips one
+  trailing newline. It fails `invalid_arguments` (exit 2), echoing nothing
+  it read, when stdin is a terminal, when the value is empty or not UTF-8,
+  and when `--value` is given too. `--value` with `--secret` still works
+  and now prints one stderr warning that points at `--value-stdin`; the
+  warning never holds the value.
+- Hydrated values, `--var` values of declared secrets, the values a run
+  redacts, the `githubToken` from `gh`, the values the machine store
+  decrypts, and the `--value-stdin` buffer are held in memory that is
+  zeroed on drop, and the debug form of a hydration shows names and counts
+  only. Plain copies remain where `probe-core` renders the request, in the
+  output redactor, and in the HTTP stack; see `docs/FACET.md`.
+- `facet doctor --probe` no longer prints the value it read back when the
+  secret backend round-trip mismatches.
 
 ### Fixed
 
