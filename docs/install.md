@@ -97,6 +97,18 @@ facet --version
 
 ## Verify install
 
+### Release archive provenance
+
+Release archives from 0.8.0 on carry a signed build provenance attestation (keyless, via GitHub and Sigstore), and so does `SHA256SUMS`. Before you extract an archive, check that the release workflow in `Hedronite/facet` built it:
+
+```bash
+gh attestation verify facet-cli-<version>-<platform>.tar.gz --repo Hedronite/facet
+```
+
+It needs the [GitHub CLI](https://cli.github.com/), logged in. It exits non-zero when the file has no valid attestation from this repo, so do not run that binary. Releases before 0.8.0 have no attestation.
+
+### Installed binary
+
 ```bash
 facet --version          # human: facet 0.7.0 (probe 0.5.9)
 facet --version --json   # structured version + probeVersion

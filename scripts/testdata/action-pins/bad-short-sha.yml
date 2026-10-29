@@ -1,0 +1,8 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # A short SHA is not a pin.
+      - uses: actions/checkout@3d3c42e # v7.0.1

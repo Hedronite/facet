@@ -81,6 +81,7 @@ separate version axes and do not move with this release.
   only began with `https://api.github.com` (such as `api.github.com.invalid`)
   could fall back too. A `{{githubToken}}` request that passes the host
   check is locked before `gh` is asked.
+- Security: every GitHub Action in CI and release is pinned to a full commit SHA, and scripts/check-action-pins.sh enforces this in CI. Release builds and tests run with --locked. Each release asset and SHA256SUMS carries a keyless build provenance attestation; verify a download with gh attestation verify <asset> --repo Hedronite/facet.
 
 ### Fixed
 

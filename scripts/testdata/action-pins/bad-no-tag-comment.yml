@@ -1,0 +1,8 @@
+name: probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # A full SHA with no tag comment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
