@@ -1,0 +1,88 @@
+# Rust-TOPS 1.1.0 class record for this crate. Bend laws stay off.
+# Coverage, CRAP and mutation are advisory and off.
+protocol:
+  id: rust-tops
+  version: "1.1.0"
+  spec_uri: "https://github.com/Hedronite/rust-tops/blob/v0.2.0/RUST_TOPS.md"
+  adopted: "2026-10-28"
+
+crate:
+  name: facet-lattice
+  class: library-core
+  edition: "2024"
+  msrv: "1.95"
+  unsafe_policy: forbid
+  hot_paths: []
+
+goals:
+  correctness: behavior matches specified invariants under all applicable layers
+  density: fewest necessary production lines
+  performance: no unexplained regression on hot_paths
+
+layers:
+  - { id: static-lint, enabled: true, tier: 0, runner: "cargo fmt/clippy/deny", scope: workspace }
+  - { id: unit, enabled: true, tier: 0, runner: "cargo nextest", scope: lib }
+  - { id: doc, enabled: true, tier: 0, runner: "cargo test --doc", scope: lib }
+  - { id: integration, enabled: true, tier: 1, runner: "cargo nextest", scope: tests }
+  - { id: acceptance, enabled: false, tier: 1, runner: "assert_cmd journeys", scope: tests }
+  - { id: coverage, enabled: false, tier: 0, runner: cargo-llvm-cov, scope: workspace }
+  - { id: crap, enabled: false, tier: 0, runner: cargo-crap, scope: workspace }
+  - { id: mutation, enabled: false, tier: 1, runner: cargo-mutants, scope: diff }
+  - { id: property, enabled: false, tier: 1, runner: proptest, scope: lib }
+  - { id: fuzz, enabled: false, tier: 3, runner: cargo-fuzz, scope: lib }
+  - { id: formal-kani, enabled: false, tier: 4, runner: cargo-kani, scope: hot-paths }
+  - { id: security-advisory, enabled: true, tier: 0, runner: cargo-deny, scope: workspace }
+  - { id: laws, enabled: false, tier: 0, runner: bend, scope: workspace }
+
+gates:
+  lint:
+    clippy_deny:
+      - warnings
+      - clippy::correctness
+      - clippy::suspicious
+      - clippy::perf
+      - clippy::complexity
+      - clippy::dbg_macro
+    fmt_check: true
+    cognitive_complexity_max: 12
+    too_many_lines_max: 40
+    too_many_arguments_max: 6
+  unit:
+    must_pass: true
+    allow_ignored: false
+    nextest_profile: ci
+  # The schema requires these three blocks. They are inert: the layers are off, crap fails on never, and there is no coverage minimum.
+  coverage:
+    tool: cargo-llvm-cov
+    line_min_pct: null
+    region_min_pct: null
+    branch_min_pct: null
+    per_file_line_min_pct: null
+  crap:
+    tool: cargo-crap
+    formula: "CC^2 * (1 - cov)^3 + CC"
+    threshold_production: null
+    threshold_agent: 6
+    threshold_human: null
+    classic_crappy: null
+    fail_on: never
+    scar_guard: false
+  mutation:
+    tool: cargo-mutants
+    scope: diff
+    kill_rate_min_pct: null
+    unexplained_survivors_max: 0
+    timeout_multiplier: 2
+
+density:
+  production_sloc_policy: minimum necessary lines preserving named invariants
+  max_fn_sloc: 40
+  max_fn_cc: 8
+  allow_long_table_functions: true
+
+agent:
+  guidelines_file: AGENTS.md
+  may_run_tools: true
+  must_not_write_tests_from_impl: true
+  must_not_split_for_crap_alone: true
+  required_before_pr: [fmt, clippy, nextest]

@@ -1,0 +1,127 @@
+# rust-tops floor. ci.yml keeps fmt, clippy, deny and doctests on Ubuntu
+# and macOS. This workflow adds nextest on the ci profile, an MSRV check,
+# and the five floor commands on Arch and macOS.
+#
+# Toolchain: rust-toolchain.toml is the pin. Each job reads its channel and
+# hands it to dtolnay/rust-toolchain. No job installs `stable`.
+#
+# Deny runs the repo scope (advisories, bans, sources), as ci.yml does.
+# deny.toml has no licenses policy yet, so a bare `cargo deny check` fails.
+#
+# Every action is pinned by commit SHA, with its tag as a trailing comment.
+name: rust-tops
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  nextest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: Install native Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            clang \
+            cmake
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-nextest@0.9.149
+      - run: cargo nextest run --workspace --all-features --locked --profile ci
+
+  # MSRV is the repo toolchain: rust-toolchain.toml, read as the jobs above
+  # read it. No second toolchain is declared.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: Install native Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            clang \
+            cmake
+      - run: cargo check --workspace --all-features --locked
+
+  # Floor on Arch. Actions has no Arch label, so this runs the archlinux
+  # container on an Ubuntu runner. cargo-deny and cargo-nextest are built
+  # from source at the versions the other jobs install.
+  floor-arch:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: bootstrap
+        run: pacman -Syu --noconfirm --needed git curl base-devel ca-certificates clang cmake
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy, rustfmt
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: cargo deny
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny --workspace check advisories bans sources
+      - name: cargo nextest
+        run: |
+          cargo install cargo-nextest --version 0.9.149 --locked
+          cargo nextest run --workspace --all-features --locked --profile ci
+      - name: msrv
+        run: cargo check --workspace --all-features --locked
+
+  # Floor on macOS: the same five commands.
+  floor-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy, rustfmt
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-deny@0.20.2
+      - name: cargo deny
+        run: cargo deny --workspace check advisories bans sources
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-nextest@0.9.149
+      - name: cargo nextest
+        run: cargo nextest run --workspace --all-features --locked --profile ci
+      - name: msrv
+        run: cargo check --workspace --all-features --locked
