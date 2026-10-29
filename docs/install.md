@@ -51,14 +51,14 @@ See also [crates/lattice/README.md](../crates/lattice/README.md) and [Lattice en
 
 The `facet` executable is **not** on crates.io as a one-line `cargo install facet`. The Cargo package is `facet-cli`; the installed binary is `facet`.
 
-### From the v0.7.0 tag (primary)
+### From the v0.8.0 tag (primary)
 
 Requires a Rust toolchain. This installs the `facet` binary from package `facet-cli` at the release tag:
 
 ```bash
-cargo install --git https://github.com/Hedronite/facet --tag v0.7.0 --locked --bin facet facet-cli
+cargo install --git https://github.com/Hedronite/facet --tag v0.8.0 --locked --bin facet facet-cli
 facet --version
-# facet 0.7.0 (probe 0.5.9)
+# facet 0.8.0 (probe 0.5.9)
 ```
 
 ### From main (secondary)
@@ -85,14 +85,14 @@ facet --version
 ### From a GitHub release archive
 
 1. Open [Facet releases](https://github.com/Hedronite/facet/releases).
-2. Download the archive for your platform (`facet-cli-<version>-<platform>.tar.gz`).
+2. Download the archive for your platform: `facet-cli-0.8.0-macos-arm64.tar.gz` (macOS, Apple silicon) or `facet-cli-0.8.0-linux-x64.tar.gz` (Linux, x86-64).
 3. Extract the `facet` binary.
 4. Move it onto your `PATH` (e.g. `~/.local/bin` or `/usr/local/bin`).
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"   # if needed
 facet --version
-# facet 0.7.0 (probe 0.5.9)
+# facet 0.8.0 (probe 0.5.9)
 ```
 
 ## Verify install
@@ -102,7 +102,8 @@ facet --version
 Release archives from 0.8.0 on carry a signed build provenance attestation (keyless, via GitHub and Sigstore), and so does `SHA256SUMS`. Before you extract an archive, check that the release workflow in `Hedronite/facet` built it:
 
 ```bash
-gh attestation verify facet-cli-<version>-<platform>.tar.gz --repo Hedronite/facet
+gh attestation verify facet-cli-0.8.0-macos-arm64.tar.gz --repo Hedronite/facet
+gh attestation verify facet-cli-0.8.0-linux-x64.tar.gz --repo Hedronite/facet
 ```
 
 It needs the [GitHub CLI](https://cli.github.com/), logged in. It exits non-zero when the file has no valid attestation from this repo, so do not run that binary. Releases before 0.8.0 have no attestation.
@@ -110,7 +111,7 @@ It needs the [GitHub CLI](https://cli.github.com/), logged in. It exits non-zero
 ### Installed binary
 
 ```bash
-facet --version          # human: facet 0.7.0 (probe 0.5.9)
+facet --version          # human: facet 0.8.0 (probe 0.5.9)
 facet --version --json   # structured version + probeVersion
 facet doctor --json      # machine + workspace stores, secrets backend, env flags
 ```
@@ -124,11 +125,11 @@ to be true.
 
 | Artifact | Source | Version |
 | --- | --- | --- |
-| `facet` CLI / `facet-tui` / `facet-record` | `[workspace.package].version`, GitHub release tag | **0.7.0** (when tagged) |
+| `facet` CLI / `facet-tui` / `facet-record` | `[workspace.package].version`, GitHub release tag | **0.8.0** (when tagged) |
 | `facet-lattice` crate | [crates.io](https://crates.io/crates/facet-lattice) | **0.5.9** live (0.5.8 also up) |
 | `probe-*` crates | vendored Probe cut, pinned per crate | **0.5.9** |
 
-`facet --version` prints the first and third together: `facet 0.7.0 (probe 0.5.9)`.
+`facet --version` prints the first and third together: `facet 0.8.0 (probe 0.5.9)`.
 The `facet-lattice` crate is never bumped to match the CLI, and the probe crates
 are never bumped to make that parenthetical look symmetrical. **0.5.8** stays on
 crates.io (no yank). `scripts/version-check.sh` is the gate that keeps the git
