@@ -6,6 +6,10 @@ separate version axes and do not move with this release.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-29
+
+Changes since v0.7.0 (`a04bd29`, 2026-10-25).
+
 ### Added
 
 - A Facet-owned `facet:` key in the collection YAML turns recording off.
@@ -18,9 +22,29 @@ separate version axes and do not move with this release.
   the error names the key path and never the value. Unknown YAML outside
   `facet:` is still accepted and kept, and so is `facet:` when a command
   rewrites the file.
+- CI runs a rust-tops floor beside the existing checks: `cargo nextest` with a
+  `ci` profile, an MSRV check on the repository toolchain, and the fmt,
+  clippy, deny, nextest and check commands on Arch Linux and macOS.
 
 ### Security
 
+- A machine-store row can no longer move the host of a secret request. Facet
+  resolves the full URL with the store values and compares it with the URL
+  built from the collection environment and `--var` alone. A change of scheme,
+  host or port, or added userinfo, fails with `host_override_refused` before
+  anything is sent, under any variable name (not only `baseUrl` and
+  `serverUrl`). The error names the store variable, never its value. The
+  comparison uses the `url` crate parser and refuses an authority that
+  contains a backslash, a control character or a percent sign.
+- Secret requests use a locked transport: redirects are not followed and
+  `HTTP_PROXY` / `HTTPS_PROXY` are ignored. The lock applies when the selected
+  environment declares a referenced variable secret, from any source; when no
+  environment is selected and the request references a `--var`; and when
+  secret discovery fails. `facet`, `probe` and the TUI decide this with one
+  shared rule, and `probe` sends a `--var` declared secret through the locked
+  transport too. Any other request uses the normal transport, as before.
+  Earlier, a secret request followed redirects and honoured the proxy
+  environment variables.
 - `request run` and `replay` output, their error envelopes and `error[...]`
   lines, and MCP `request_run` and `run_replay` now redact what the run
   knows is secret. Known secret values of 4 bytes or more (hydrated, passed
@@ -81,7 +105,11 @@ separate version axes and do not move with this release.
   only began with `https://api.github.com` (such as `api.github.com.invalid`)
   could fall back too. A `{{githubToken}}` request that passes the host
   check is locked before `gh` is asked.
-- Security: every GitHub Action in CI and release is pinned to a full commit SHA, and scripts/check-action-pins.sh enforces this in CI. Release builds and tests run with --locked. Each release asset and SHA256SUMS carries a keyless build provenance attestation; verify a download with gh attestation verify <asset> --repo Hedronite/facet.
+- Every GitHub Action in CI and release is pinned to a full commit SHA, and
+  `scripts/check-action-pins.sh` enforces this in CI. Release builds and tests
+  run with `--locked`. Each release asset and `SHA256SUMS` carries a keyless
+  build provenance attestation; verify a download with `gh attestation verify
+  <asset> --repo Hedronite/facet`.
 - A file body or multipart file part is sent only from inside the
   collection directory. Before anything is sent, on `request run`,
   `--dry-run`, `replay`, the TUI and MCP, its path is canonicalized and
@@ -112,17 +140,10 @@ separate version axes and do not move with this release.
 
 ### Fixed
 
-- A request that carries no secret uses the normal transport again. A CLI
-  request run without `--environment` follows redirects and connects through
-  `HTTP_PROXY` / `HTTPS_PROXY` when it references no variable supplied by
-  `--var`. A TUI send with no active environment does the same, and TUI
-  sends that reference a secret stay locked. This removes the 0.7.1 known
-  issue. The locked transport (no redirects, no env proxy) still applies
-  when the selected environment declares a referenced variable secret, from
-  any source; when no environment is selected and the request references a
-  `--var`; and when secret discovery fails. `facet`, `probe` and the TUI
-  decide this with one shared rule.
-- Fixed: the TUI no longer drops file, form and multipart bodies on send and on save. It used to send them empty and delete them from the collection YAML. TUI sends now confine file bodies to the collection folder like the CLI (`file_body_outside_root`).
+- The TUI no longer drops file, form and multipart bodies on send and on save.
+  It used to send them empty and delete them from the collection YAML. TUI
+  sends now keep file bodies inside the collection directory, as the CLI does
+  (`file_body_outside_root`).
 
 ## [0.7.0] - 2026-10-25
 
