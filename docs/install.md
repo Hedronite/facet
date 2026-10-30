@@ -118,6 +118,10 @@ facet doctor --json      # machine + workspace stores, secrets backend, env flag
 
 `facet doctor` reports whether Lattice stores open, schema versions, and which `FACET_*` environment variables are set. Use it after install or when debugging a new machine.
 
+### Root-owned installs
+
+If you run `facet` from a root-owned prefix with a version-matched command allowlist, follow the [root-custody upgrade runbook](custody-upgrade-runbook.md) to lock, switch, check, and roll back.
+
 ## Versions
 
 Facet carries three version axes. They are allowed to differ; each simply has
@@ -139,4 +143,5 @@ tag, the Cargo version, and the built binary in agreement.
 
 - Product overview: [README](../README.md)
 - Facet commands and JSON contracts: [FACET.md](FACET.md)
+- Root-custody upgrades: [custody-upgrade-runbook.md](custody-upgrade-runbook.md)
 - Engine configuration: [LATTICE-ENGINES.md](LATTICE-ENGINES.md)
