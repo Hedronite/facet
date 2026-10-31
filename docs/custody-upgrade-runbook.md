@@ -4,12 +4,27 @@ Use this to upgrade a `facet` binary installed under a root-owned prefix (`<pref
 
 ## Run order
 
-1. **Verify the release.** `gh attestation verify <archive> --repo Hedronite/facet` must pass. After you extract the archive, record `shasum -a 256 facet` and check it against the attested release digest (`SHA256SUMS`, which is attested too).
+1. **Verify the release.** Before you extract anything, check that the release workflow built the archive and `SHA256SUMS` from the tag you mean to install (block below). Both `gh attestation verify` runs must exit 0, and `shasum -c` must print `OK`. After you extract the archive, record `shasum -a 256 facet`: that is the sha the allowlist pins.
 2. **Install under the root prefix.** Put the binary at `$D/facet/<version>/facet` (root-owned) and stage the allowlist that matches the version.
 3. **Lock and switch** (block below).
 4. **Post-checks** (below). Do not go on until every check passes.
 5. **Smokes and QA.** Run `facet --version`, `facet doctor --json`, and your usual smoke runs against the live path.
 6. **Announce downstream.** Tell dependent hosts or users that `<version>` is live.
+
+## Verify the release
+
+```bash
+V=<version>                                          # e.g. 0.8.0
+T=$(gh api repos/Hedronite/facet/commits/v$V --jq .sha)  # the commit the tag points at
+for f in facet-cli-$V-macos-arm64.tar.gz SHA256SUMS; do
+  gh attestation verify $f --repo Hedronite/facet \
+    --signer-workflow Hedronite/facet/.github/workflows/release.yml \
+    --source-ref refs/tags/v$V --source-digest $T
+done
+shasum -a 256 -c SHA256SUMS --ignore-missing         # the archive matches the attested digest list
+```
+
+`--repo` alone accepts an attestation from any workflow in the repo, built from any ref. The three pins tie it to `release.yml`, the `v<version>` tag and that tag's commit, so an archive built from a branch or another workflow fails here.
 
 ## Lock and switch
 
