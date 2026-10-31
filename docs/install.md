@@ -99,14 +99,19 @@ facet --version
 
 ### Release archive provenance
 
-Release archives from 0.8.0 on carry a signed build provenance attestation (keyless, via GitHub and Sigstore), and so does `SHA256SUMS`. Before you extract an archive, check that the release workflow in `Hedronite/facet` built it:
+Release archives from 0.8.0 on carry a signed build provenance attestation (keyless, via GitHub and Sigstore), and so does `SHA256SUMS`. Before you extract an archive, check that `release.yml` in `Hedronite/facet` built it from the `v0.8.0` tag:
 
 ```bash
-gh attestation verify facet-cli-0.8.0-macos-arm64.tar.gz --repo Hedronite/facet
-gh attestation verify facet-cli-0.8.0-linux-x64.tar.gz --repo Hedronite/facet
+T=$(gh api repos/Hedronite/facet/commits/v0.8.0 --jq .sha)  # the commit the tag points at
+for f in facet-cli-0.8.0-macos-arm64.tar.gz SHA256SUMS; do  # linux: facet-cli-0.8.0-linux-x64.tar.gz
+  gh attestation verify $f --repo Hedronite/facet \
+    --signer-workflow Hedronite/facet/.github/workflows/release.yml \
+    --source-ref refs/tags/v0.8.0 --source-digest $T
+done
+shasum -a 256 -c SHA256SUMS --ignore-missing  # linux: sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-It needs the [GitHub CLI](https://cli.github.com/), logged in. It exits non-zero when the file has no valid attestation from this repo, so do not run that binary. Releases before 0.8.0 have no attestation.
+It needs the [GitHub CLI](https://cli.github.com/), logged in. `--repo` alone accepts an attestation from any workflow in the repo, built from any ref; the other three flags tie it to the release workflow and the tag. Each command exits non-zero when the file has no matching attestation, so do not run that binary. Releases before 0.8.0 have no attestation.
 
 ### Installed binary
 
