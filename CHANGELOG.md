@@ -6,6 +6,12 @@ separate version axes and do not move with this release.
 
 ## [Unreleased]
 
+### Security
+
+- `async-executor` 1.14.0 → 1.14.1 to replace a yanked crate.
+- `rustix` 1.1.4 → 1.1.6 to clear RUSTSEC-2026-0486 (unsound zero-length xattr buffer).
+- `libsqlite3-sys` 0.38.2 (RUSTSEC-2026-0459) is not upgraded in this change. `facet-cli` depends on `hedron-core` from `hedrondb` at rev `3167d090`, which requires `rusqlite ^0.40` and therefore `libsqlite3-sys ^0.38`. Cargo will not resolve a second `libsqlite3-sys` (the `links = "sqlite3"` rule). Clearing that advisory needs `hedron-core` on `rusqlite` 0.42, which also raises that crate's MSRV to 1.89; `hedrondb` main currently pins `rusqlite =0.32.1` for rustc 1.83.
+
 ## [0.8.0] - 2026-10-29
 
 Changes since v0.7.0 (`a04bd29`, 2026-10-25).
