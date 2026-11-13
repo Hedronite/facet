@@ -19,7 +19,7 @@ facet-lattice = { path = "../lattice" }
 # The only Nickel VM on the platform: in-process, never a `nickel` subprocess.
 hedron-ncl = { path = "../hedron-ncl" }
 # Git pin so CI can resolve without a sibling clone (PR #28 CI).
-hedron-core = { git = "https://github.com/VirtualMachinist/hedrondb.git", rev = "f4bc4dc31fb4e09671c629a6731b746413247c95" }
+hedron-core = { git = "https://github.com/VirtualMachinist/hedrondb.git", rev = "f6806fe21cb95b8b663f6bfef4e434d85bbb5c30" }
 serde_yaml = "0.9"
 rusqlite = { version = "0.42", features = ["bundled"] }
 probe-cli = { path = "../cli" }

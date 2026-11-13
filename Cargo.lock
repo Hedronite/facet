@@ -1737,7 +1737,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 [[package]]
 name = "hedron-core"
 version = "0.1.0"
-source = "git+https://github.com/VirtualMachinist/hedrondb.git?rev=f4bc4dc31fb4e09671c629a6731b746413247c95#f4bc4dc31fb4e09671c629a6731b746413247c95"
+source = "git+https://github.com/VirtualMachinist/hedrondb.git?rev=f6806fe21cb95b8b663f6bfef4e434d85bbb5c30#f6806fe21cb95b8b663f6bfef4e434d85bbb5c30"
 dependencies = [
  "blake3",
  "indexmap",
