@@ -10,7 +10,8 @@ separate version axes and do not move with this release.
 
 - `async-executor` 1.14.0 → 1.14.1 to replace a yanked crate.
 - `rustix` 1.1.4 → 1.1.6 to clear RUSTSEC-2026-0486 (unsound zero-length xattr buffer).
-- `libsqlite3-sys` 0.38.2 (RUSTSEC-2026-0459) is not upgraded in this change. `facet-cli` depends on `hedron-core` from `hedrondb` at rev `3167d090`, which requires `rusqlite ^0.40` and therefore `libsqlite3-sys ^0.38`. Cargo will not resolve a second `libsqlite3-sys` (the `links = "sqlite3"` rule). Clearing that advisory needs `hedron-core` on `rusqlite` 0.42, which also raises that crate's MSRV to 1.89; `hedrondb` main currently pins `rusqlite =0.32.1` for rustc 1.83.
+- `libsqlite3-sys` 0.38.2 → 0.40.0 (via `rusqlite` 0.40.2 → 0.42.0) to clear RUSTSEC-2026-0459. `facet-cli` and `facet-lattice` now require `rusqlite` 0.42, and the `hedron-core` git pin moves from `3167d090` to `f4bc4dc3`, the head of the upstream `hedrondb` change that moves that crate to `rusqlite` 0.42 (its MSRV goes to 1.89). The pin is temporary and moves to the `hedrondb` merge commit once that change lands. Facet's MSRV stays 1.95. `facet-lattice` is not republished by this change. Internal follow-ups for `rusqlite` 0.42 in `facet-lattice`: `Connection::authorizer` now takes `&mut self`, and `Statement::column_names` returns an iterator. Neither changes the public API.
+- `chacha20` 0.10.1 → 0.10.2 to replace a yanked crate.
 
 ## [0.8.0] - 2026-10-29
 

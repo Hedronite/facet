@@ -572,7 +572,7 @@ impl WorkspaceStore {
     /// `environments.secret_ref`) are NULL wherever the statement references
     /// them. `redacted_columns` names the ones this statement read.
     pub fn query(&self, sql: &str) -> Result<SqlResult, LatticeError> {
-        let conn = Connection::open(&self.facet_dir.join(DB_FILE), &self.config, true)?;
+        let mut conn = Connection::open(&self.facet_dir.join(DB_FILE), &self.config, true)?;
         let authorizer = conn.install_sql_authorizer()?;
         let mut statement = conn.prepare_read_only(sql)?;
         let columns = statement.column_names();
