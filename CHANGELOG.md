@@ -6,6 +6,18 @@ separate version axes and do not move with this release.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-13
+
+Changes since v0.8.0. `facet-lattice` stays 0.5.9.
+
+### Added
+
+- A root-custody upgrade runbook covering lock and switch ([#62](https://github.com/Hedronite/facet/pull/62)).
+
+### Changed
+
+- The custody runbook and [install](docs/install.md) attestation verify steps pin the signer workflow and the tag ([#63](https://github.com/Hedronite/facet/pull/63)).
+
 ## [0.8.0] - 2026-10-29
 
 Changes since v0.7.0 (`a04bd29`, 2026-10-25).
