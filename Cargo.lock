@@ -369,9 +369,9 @@ dependencies = [
 
 [[package]]
 name = "async-executor"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
+checksum = "f426a31126c735126297bc5ea7a521263c9faff4f63ca415267ee625651c4f37"
 dependencies = [
  "async-task",
  "concurrent-queue",
@@ -394,7 +394,7 @@ dependencies = [
  "futures-lite",
  "parking",
  "polling",
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "slab",
  "windows-sys 0.61.2",
 ]
@@ -425,7 +425,7 @@ dependencies = [
  "cfg-if",
  "event-listener",
  "futures-lite",
- "rustix 1.1.4",
+ "rustix 1.1.6",
 ]
 
 [[package]]
@@ -451,7 +451,7 @@ dependencies = [
  "cfg-if",
  "futures-core",
  "futures-io",
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "signal-hook-registry",
  "slab",
  "windows-sys 0.61.2",
@@ -704,9 +704,9 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cipher",
@@ -1059,7 +1059,7 @@ dependencies = [
  "document-features",
  "mio",
  "parking_lot",
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "signal-hook",
  "signal-hook-mio",
  "winapi",
@@ -1529,7 +1529,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e72ed92b67c146290f88e9c89d60ca163ea417a446f61ffd7b72df3e7f1dfd5"
 dependencies = [
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -1737,12 +1737,14 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 [[package]]
 name = "hedron-core"
 version = "0.1.0"
-source = "git+https://github.com/VirtualMachinist/hedrondb.git?rev=3167d09032473b0f9f16ec73beed871e68100904#3167d09032473b0f9f16ec73beed871e68100904"
+source = "git+https://github.com/VirtualMachinist/hedrondb.git?rev=f6806fe21cb95b8b663f6bfef4e434d85bbb5c30#f6806fe21cb95b8b663f6bfef4e434d85bbb5c30"
 dependencies = [
  "blake3",
  "indexmap",
+ "jiff",
  "rusqlite",
  "serde",
+ "serde_json",
  "serde_yaml",
  "uuid",
 ]
@@ -2109,6 +2111,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jiff"
+version = "0.1.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c04ef77ae73f3cf50510712722f0c4e8b46f5aaa1bf5ffad2ae213e6495e78e5"
+dependencies = [
+ "jiff-tzdb-platform",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa8377070c6bae868759445e5a77f66d84f0b72f3a054bfb00e6d038b8282da7"
+
+[[package]]
+name = "jiff-tzdb-platform"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875a5a69ac2bab1a891711cf5eccbec1ce0341ea805560dcd90b7a2e925132e8"
+dependencies = [
+ "jiff-tzdb",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2363,9 +2394,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.38.2"
+version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+checksum = "b06e69070b7e12262b0cd90832f0a7396f142a2b330181255562decf9f0c6215"
 dependencies = [
  "cc",
  "pkg-config",
@@ -3029,7 +3060,7 @@ dependencies = [
  "concurrent-queue",
  "hermit-abi",
  "pin-project-lite",
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -3048,6 +3079,15 @@ name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "potential_utf"
@@ -3521,19 +3561,18 @@ dependencies = [
 
 [[package]]
 name = "rsqlite-vfs"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c51c9ae4df8a7fba42103df5c621fa3c37eccf3a3c650879e90fc48b11cc192c"
+checksum = "353b74f9810d5b085b6c42c9d86a5f0fdb795553235cdd48753b32e3809d18a7"
 dependencies = [
- "hashbrown 0.16.1",
  "thiserror",
 ]
 
 [[package]]
 name = "rusqlite"
-version = "0.40.2"
+version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23f2a97da3e3873c73cb2a2e71b35c40ff95e0b1eefa8d72d8499a6928c3b5b3"
+checksum = "a4edff0039f148731aee2fd80f76dbfeb12d204ab3d1c544838d34e02151049b"
 dependencies = [
  "bitflags",
  "fallible-iterator",
@@ -3583,9 +3622,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",
@@ -4013,14 +4052,12 @@ dependencies = [
 
 [[package]]
 name = "sqlite-wasm-rs"
-version = "0.5.5"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc3efc0da82635d7e1ced0053bbbfa8c7ab9645d0bf36ceb4f7127bb85315d75"
+checksum = "a6cd504cecbfe7eef649988840f9a6cb768d11085efec138f8e99f160632d867"
 dependencies = [
  "cc",
- "js-sys",
  "rsqlite-vfs",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -4172,7 +4209,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.3.4",
  "once_cell",
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -5086,7 +5123,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
- "rustix 1.1.4",
+ "rustix 1.1.6",
 ]
 
 [[package]]
@@ -5150,7 +5187,7 @@ dependencies = [
  "hex",
  "libc",
  "ordered-stream",
- "rustix 1.1.4",
+ "rustix 1.1.6",
  "serde",
  "serde_repr",
  "tracing",

@@ -47,7 +47,7 @@ impl Connection {
         } else {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
         };
-        let conn = rusqlite::Connection::open_with_flags(path, flags)?;
+        let mut conn = rusqlite::Connection::open_with_flags(path, flags)?;
         conn.busy_timeout(Duration::from_millis(config.busy_timeout_ms))?;
         if read_only {
             conn.pragma_update(None, "query_only", true)?;
@@ -95,7 +95,8 @@ impl Connection {
 
     /// Authorizer for `history --sql`. Secret columns are read as NULL.
     /// ATTACH, load_extension, and pragma writes are denied.
-    pub(crate) fn install_sql_authorizer(&self) -> Result<SqlAuthorizer> {
+    /// `&mut self` because rusqlite 0.42 takes `&mut Connection` here.
+    pub(crate) fn install_sql_authorizer(&mut self) -> Result<SqlAuthorizer> {
         let redacted = Arc::new(Mutex::new(BTreeSet::new()));
         let recorded = Arc::clone(&redacted);
         match self {
@@ -394,7 +395,7 @@ pub(crate) enum Statement<'conn> {
 impl Statement<'_> {
     pub(crate) fn column_names(&self) -> Vec<String> {
         match self {
-            Self::Sqlite(stmt) => stmt.column_names().into_iter().map(str::to_owned).collect(),
+            Self::Sqlite(stmt) => stmt.column_names().map(str::to_owned).collect(),
         }
     }
     pub(crate) fn query(&mut self, params: impl Bind) -> Result<Rows<'_>> {
