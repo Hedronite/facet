@@ -36,7 +36,7 @@
 
 ---
 
-> **Status:** In production use as daily-driver / dogfood local-first API client (CLI/TUI + facet-lattice). 0.8.0 on main (next release); 0.7.0 released (Oct 25, 2026). WebSocket/GraphQL/gRPC on the roadmap. Not a toy reference.
+> **Status:** In production use as daily-driver / dogfood local-first API client (CLI/TUI + facet-lattice). 0.8.1 on main (this release); 0.8.0 released (Oct 29, 2026). WebSocket/GraphQL/gRPC on the roadmap. Not a toy reference.
 
 
 **Facet** is the terminal product: a `facet` CLI and Ratatui TUI on the same OpenCollection YAML as [Probe](https://github.com/crizant/probe). **[facet-lattice](https://crates.io/crates/facet-lattice)** is the run-history library underneath — SQLite for runs, bodies, timings, and sessions beside your YAML on disk.
@@ -186,7 +186,7 @@ docs/FACET.md             # Facet contracts
 
 ## Status
 
-**0.8.0** on `main` (next release). **0.7.0** released (Oct 25, 2026). The `facet-lattice` crate is a separate version axis and does not follow the CLI: [`facet-lattice` 0.5.9](https://crates.io/crates/facet-lattice) is live on crates.io, with 0.5.8 still up (no yank).
+**0.8.1** on `main` (this release). **0.8.0** released (Oct 29, 2026). The `facet-lattice` crate is a separate version axis and does not follow the CLI: [`facet-lattice` 0.5.9](https://crates.io/crates/facet-lattice) is live on crates.io, with 0.5.8 still up (no yank).
 
 - **facet-lattice**: SQLite default. Scrubbed crate package published as **0.5.9**.
 - **CLI + TUI**: shipped. Deterministic JSON, SQL over history, Ratatui interface.
