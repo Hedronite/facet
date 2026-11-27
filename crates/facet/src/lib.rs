@@ -12,8 +12,8 @@
 //! - `env` sets and lists machine-store environment values (metadata only on read).
 //! - `request run --expect` / `--dry-run`: the assertion (exit 1) and the preview.
 //! - `mcp` serves the same functions as Model Context Protocol tools over stdio.
-//! - `ncl check` / `ncl export` / `ncl apply` evaluate Nickel in-process
-//!   (`hedron-ncl`); Facet is the only Nickel VM on the platform.
+//! - `ncl` (facet binary only) is a one-release shim to `tetractl`.
+//! - `apply --frozen` executes a frozen bundle without the Nickel VM.
 //! - `tui` opens the terminal UI.
 //!
 //! Contract details for the Facet-only commands live in `docs/FACET.md`.
@@ -36,12 +36,10 @@ mod env;
 mod error;
 mod expect;
 mod frozen_apply;
+mod frozen_ledger;
 mod history;
 mod mcp;
-pub mod ncl;
-mod ncl_apply;
-mod ncl_ledger;
-mod ncl_pack;
+pub mod ncl_shim;
 mod pin;
 mod presentation;
 mod replay;
@@ -375,7 +373,9 @@ where
         "blob" => history::blob(&args[1..]),
         "gc" => history::gc(&args[1..]),
         "theme" => theme::theme(&args[1..]),
-        "ncl" => args::ncl(&args[1..]),
+        "ncl" => Err(FacetError::invalid_arguments(
+            "facet ncl is handled by the facet binary entrypoint",
+        )),
         "apply" => apply_cmd(&args[1..], stdin),
         "tui" => Err(FacetError::invalid_arguments(
             "tui is interactive and must be started from the facet binary",
@@ -402,7 +402,7 @@ fn apply_cmd(args: &[String], stdin: &mut impl Read) -> Result<CommandOutput, Fa
         .value("--frozen")?
         .ok_or_else(|| FacetError::invalid_arguments("apply requires --frozen <path|->"))?;
     let (output, rec) = frozen_apply::apply(frozen, stdin)?;
-    ncl_ledger::record_frozen_apply(
+    frozen_ledger::record_frozen_apply(
         &rec.path,
         &rec.module_hash,
         &rec.export_hash,

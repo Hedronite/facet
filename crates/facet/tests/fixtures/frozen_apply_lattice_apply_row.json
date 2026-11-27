@@ -1,0 +1,17 @@
+{
+  "actor": "human",
+  "method": "NCL",
+  "requestBodyHash": "e15483312d6799e11572c81c8639b2b665abdb30a82362e4f1670141df0ad205",
+  "requestBodySizeBytes": 739,
+  "requestHash": "56fddd94054ac5305ec0cf82d9d2ca23c0eaab8aa0c3ca3aa7a6ff9f1b00d7e9",
+  "requestPath": "ncl:apply",
+  "responseBodyHash": "01db9651b9672ded725296124186a36502272f48eee28b198a89ab840bfecaf7",
+  "responseBodySizeBytes": 587,
+  "tags": [
+    "ncl:module:56fddd94054ac5305ec0cf82d9d2ca23c0eaab8aa0c3ca3aa7a6ff9f1b00d7e9",
+    "ncl:export:c59535830c90b27220168775e936398073c61a8e073df4af8f9ca52b212ccff7",
+    "ncl:contracts:k8s-1.34-h3s-0.9.1"
+  ],
+  "url": "world.ncl",
+  "varNames": []
+}

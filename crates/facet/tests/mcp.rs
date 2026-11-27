@@ -126,7 +126,7 @@ fn mcp_handshake_and_tool_list_are_golden() {
 
     let list = mcp.request("tools/list", json!({}));
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 11);
     let names: Vec<&str> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
@@ -144,9 +144,6 @@ fn mcp_handshake_and_tool_list_are_golden() {
             "blob_get",
             "run_diff",
             "run_replay",
-            "ncl_check",
-            "ncl_export",
-            "ncl_apply",
             "sql_query",
         ]
     );
@@ -325,70 +322,4 @@ fn mcp_refuses_secret_values_as_arguments() {
         json!(["token"])
     );
     mcp.finish();
-}
-
-#[test]
-fn mcp_ncl_tools_match_cli_documents() {
-    let sandbox = Sandbox::new();
-    let root = sandbox.root();
-    std::fs::write(
-        root.join("lib.ncl"),
-        r#"{
-  pod = fun args => {
-    apiVersion = "v1",
-    kind = "Pod",
-    metadata.name = args.name,
-    metadata.annotations.replicas = std.to_string args.n,
-  },
-}"#,
-    )
-    .unwrap();
-    let world = root.join("world.ncl");
-    std::fs::write(
-        &world,
-        r#"let lib = import "lib.ncl" in
-{
-  replicas = 1,
-  cluster = [ lib.pod { name = "web", n = replicas } ],
-  intent = [
-    {
-      name = "test-docs-eod",
-      importance = 0.5,
-      spec = { kind = "docs_eod", date = "2026-09-12", required_briefs = [] },
-    },
-  ],
-  calls = {
-    opencollection = "1.0.0",
-    environments = [ { name = "dev", variables = [ { name = "TOKEN", secret_ref = "kr:me" } ] } ],
-    plaintext_token | not_exported = "hunter2",
-  },
-}"#,
-    )
-    .unwrap();
-    let path = world.to_str().unwrap();
-
-    let cli_check = sandbox.run_json(&["ncl", "check", path]);
-    let cli_export = sandbox.run_json(&["ncl", "export", path]);
-    let cli_apply = sandbox.run_json(&["ncl", "apply", path]);
-
-    let mut mcp = Mcp::start(&sandbox, &[]);
-    let mcp_check = mcp.ok("ncl_check", json!({ "path": path }));
-    let mcp_export = mcp.ok("ncl_export", json!({ "path": path }));
-    let mcp_apply = mcp.ok("ncl_apply", json!({ "path": path }));
-    mcp.finish();
-
-    assert_eq!(mcp_check, cli_check);
-    assert_eq!(mcp_export, cli_export);
-    assert_eq!(mcp_apply, cli_apply);
-    for key in [
-        "cluster",
-        "intent",
-        "calls",
-        "moduleHash",
-        "exportHash",
-        "contractSet",
-    ] {
-        assert!(mcp_export.get(key).is_some(), "missing {key}");
-    }
-    assert!(!mcp_export.to_string().contains("hunter2"));
 }

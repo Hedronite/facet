@@ -475,42 +475,7 @@ fn apply_frozen_lattice_blob_parity_with_ncl_apply() {
     write_world(sandbox.root());
     init_store(&sandbox);
 
-    let export_out = sandbox
-        .facet()
-        .env("HOME", sandbox.root())
-        .env("FACET_NO_RECORD", "1")
-        .args(["ncl", "export", "world.ncl", "--json"])
-        .output()
-        .unwrap();
-    assert_eq!(
-        export_out.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&export_out.stderr)
-    );
-    let export: Value = serde_json::from_slice(&export_out.stdout).unwrap();
-
-    let ncl_out = sandbox
-        .facet()
-        .env("HOME", sandbox.root())
-        .args(["ncl", "apply", "world.ncl", "--json"])
-        .output()
-        .unwrap();
-    assert_eq!(
-        ncl_out.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&ncl_out.stderr)
-    );
-    let ncl_env: Value = serde_json::from_slice(&ncl_out.stdout).unwrap();
-
-    let mut frozen = bundle(sandbox.root());
-    frozen["moduleHash"] = export["moduleHash"].clone();
-    frozen["exportHash"] = export["exportHash"].clone();
-    frozen["contractSet"] = export["contractSet"].clone();
-    frozen["cluster"] = export["cluster"].clone();
-    frozen["intent"] = export["intent"].clone();
-    frozen["calls"] = export["calls"].clone();
+    let frozen = bundle(sandbox.root());
     let path = sandbox.root().join("bundle.json");
     fs::write(&path, serde_json::to_vec(&frozen).unwrap()).unwrap();
     let frozen_out = sandbox
@@ -525,41 +490,44 @@ fn apply_frozen_lattice_blob_parity_with_ncl_apply() {
         "{}",
         String::from_utf8_lossy(&frozen_out.stderr)
     );
-    let frozen_env: Value = serde_json::from_slice(&frozen_out.stdout).unwrap();
-    for key in [
-        "path",
-        "moduleHash",
-        "exportHash",
-        "contractSet",
-        "cluster",
-        "intent",
-        "calls",
-        "action",
-    ] {
-        assert_eq!(frozen_env[key], ncl_env[key], "{key}");
-    }
 
     let rows = history_apply_rows(&sandbox);
-    assert_eq!(rows.len(), 2, "v1 ncl apply + frozen apply");
-    let frozen_row = &rows[0];
-    let ncl_row = &rows[1];
-    assert_eq!(frozen_row["method"], "NCL");
-    assert_eq!(frozen_row["requestPath"], "ncl:apply");
-    assert_eq!(frozen_row["method"], ncl_row["method"]);
-    assert_eq!(frozen_row["requestPath"], ncl_row["requestPath"]);
-    assert_eq!(frozen_row["requestHash"], ncl_row["requestHash"]);
-    assert_eq!(frozen_row["url"], ncl_row["url"]);
-    assert_eq!(frozen_row["tags"], ncl_row["tags"]);
-    assert_eq!(frozen_row["varNames"], ncl_row["varNames"]);
-    assert_eq!(frozen_row["actor"], ncl_row["actor"]);
-    let req_a = frozen_row["request"]["body"]["hash"].as_str().unwrap();
-    let req_b = ncl_row["request"]["body"]["hash"].as_str().unwrap();
-    let res_a = frozen_row["response"]["body"]["hash"].as_str().unwrap();
-    let res_b = ncl_row["response"]["body"]["hash"].as_str().unwrap();
-    assert_eq!(req_a, req_b, "req_body hash");
-    assert_eq!(res_a, res_b, "res_body hash");
-    assert_eq!(blob_bytes(&sandbox, req_a), blob_bytes(&sandbox, req_b));
-    assert_eq!(blob_bytes(&sandbox, res_a), blob_bytes(&sandbox, res_b));
+    assert_eq!(rows.len(), 1, "one ncl:apply row");
+    let row = &rows[0];
+    let golden: Value =
+        serde_json::from_str(include_str!("fixtures/frozen_apply_lattice_apply_row.json")).unwrap();
+
+    for key in [
+        "method",
+        "requestPath",
+        "requestHash",
+        "url",
+        "actor",
+        "tags",
+        "varNames",
+    ] {
+        assert_eq!(row[key], golden[key], "{key}");
+    }
+    assert_eq!(
+        row["request"]["body"]["hash"].as_str().unwrap(),
+        golden["requestBodyHash"].as_str().unwrap()
+    );
+    assert_eq!(
+        row["request"]["body"]["sizeBytes"].as_u64().unwrap(),
+        golden["requestBodySizeBytes"].as_u64().unwrap()
+    );
+    assert_eq!(
+        row["response"]["body"]["hash"].as_str().unwrap(),
+        golden["responseBodyHash"].as_str().unwrap()
+    );
+    assert_eq!(
+        row["response"]["body"]["sizeBytes"].as_u64().unwrap(),
+        golden["responseBodySizeBytes"].as_u64().unwrap()
+    );
+    let req_hash = row["request"]["body"]["hash"].as_str().unwrap();
+    let res_hash = row["response"]["body"]["hash"].as_str().unwrap();
+    assert!(!blob_bytes(&sandbox, req_hash).is_empty());
+    assert!(!blob_bytes(&sandbox, res_hash).is_empty());
 }
 
 #[test]
