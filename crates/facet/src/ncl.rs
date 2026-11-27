@@ -128,7 +128,7 @@ pub fn apply(
 ) -> Result<NclApply, FacetError> {
     let export = evaluate(path, vars, import_paths)?;
     let action = ncl_apply::execute(&export)?;
-    crate::ncl_ledger::record_apply(path, &export, &action, vars);
+    crate::ncl_ledger::record_apply(path, &export, &action.to_json(), vars);
     Ok(ncl_apply::from_export(export, action))
 }
 

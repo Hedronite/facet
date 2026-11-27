@@ -515,6 +515,7 @@ pub(crate) fn send(
 
 /// Executes one resolved request on a fresh single-thread runtime, with
 /// Ctrl-C cancellation and optional streaming to `output`.
+#[allow(dead_code)]
 pub(crate) fn execute(
     request: &HttpRequest,
     base_directory: Option<PathBuf>,

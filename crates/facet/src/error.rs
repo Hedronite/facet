@@ -366,6 +366,14 @@ impl FacetError {
             INVALID_WORKSPACE_EXIT_CODE,
         )
     }
+
+    pub(crate) fn stdin_bundle(error: &std::io::Error) -> Self {
+        Self::new(
+            "stdin_error",
+            format!("cannot read frozen bundle from stdin: {error}"),
+            INVALID_WORKSPACE_EXIT_CODE,
+        )
+    }
 }
 
 /// `text` with every known value replaced, and every URL in it (a transport

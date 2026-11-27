@@ -30,10 +30,12 @@ use serde_json::{Value, json};
 
 mod args;
 mod diff;
+mod docs_eod;
 mod doctor;
 mod env;
 mod error;
 mod expect;
+mod frozen_apply;
 mod history;
 mod mcp;
 pub mod ncl;
@@ -243,6 +245,8 @@ pub const fn help() -> &'static str {
         "  theme check <path>                  Validate a facet-tui theme file (exit 1 if invalid)\n",
         "  theme list                          List built-in and discovered theme files\n",
         "  tui [<path>]                        Open the terminal UI\n",
+        "  apply --frozen <path|->             Execute a schemaVersion 1 frozen bundle (file or stdin).\n",
+        "                                      --frozen here means execute this bundle, not ncl export --frozen.\n",
         "  mcp                                 Serve the same commands as MCP tools over stdio\n",
         "\n",
         "Options:\n",
@@ -316,7 +320,8 @@ where
         None => true,
         Some(
             "history" | "last" | "pin" | "mcp" | "session" | "replay" | "diff" | "env" | "doctor"
-            | "blob" | "gc" | "theme" | "tui" | "ncl" | "-V" | "--version" | "-h" | "--help",
+            | "blob" | "gc" | "theme" | "tui" | "ncl" | "apply" | "-V" | "--version" | "-h"
+            | "--help",
         ) => true,
         Some("request") => args.get(1).map(String::as_str) == Some("run"),
         Some(_) => false,
@@ -371,6 +376,7 @@ where
         "gc" => history::gc(&args[1..]),
         "theme" => theme::theme(&args[1..]),
         "ncl" => args::ncl(&args[1..]),
+        "apply" => apply_cmd(&args[1..], stdin),
         "tui" => Err(FacetError::invalid_arguments(
             "tui is interactive and must be started from the facet binary",
         )),
@@ -383,6 +389,29 @@ where
         Ok(output) => output.render(json_output, quiet),
         Err(error) => RunOutput::failure(error, json_output),
     }
+}
+
+fn apply_cmd(args: &[String], stdin: &mut impl Read) -> Result<CommandOutput, FacetError> {
+    let parsed = args::parse(args, &["--frozen"], &[])?;
+    if !parsed.positionals().is_empty() {
+        return Err(FacetError::invalid_arguments(
+            "apply takes no positional arguments; use --frozen <path|->",
+        ));
+    }
+    let frozen = parsed
+        .value("--frozen")?
+        .ok_or_else(|| FacetError::invalid_arguments("apply requires --frozen <path|->"))?;
+    let (output, rec) = frozen_apply::apply(frozen, stdin)?;
+    ncl_ledger::record_frozen_apply(
+        &rec.path,
+        &rec.module_hash,
+        &rec.export_hash,
+        &rec.contract_set,
+        &rec.snapshot,
+        &rec.artifact,
+        &rec.var_names,
+    );
+    Ok(output)
 }
 
 /// Removes `--json` and `--quiet` with upstream's exact rules.
