@@ -692,6 +692,12 @@ fn apply_frozen_cluster_post_against_mock_https() {
         "-subj",
         "/CN=facet-test",
     ]);
+    let client_ext = tls.join("client.cnf");
+    fs::write(
+        &client_ext,
+        "[ext]\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n",
+    )
+    .unwrap();
     run_ssl(&[
         "x509",
         "-req",
@@ -706,6 +712,10 @@ fn apply_frozen_cluster_post_against_mock_https() {
         client_pem.to_str().unwrap(),
         "-days",
         "1",
+        "-extfile",
+        client_ext.to_str().unwrap(),
+        "-extensions",
+        "ext",
     ]);
     let ready = tls.join("ready");
     let log = tls.join("server.log");
