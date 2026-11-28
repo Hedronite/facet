@@ -912,10 +912,21 @@ unset or empty. On failure the envelope includes `exit` and `stderr`. It
 covers `request list`, `request get`, `history` (no `--bodies`), `history --id`
 (no `--bodies`), `history --sql` (read-only; secret columns are NULL; writes fail with `sql_read_only`),
 `last`, `session list`, `session show`, `pin list`, `env list` (names only),
-`diff` (no `--bodies`), `ncl check`, `ncl export`, and `doctor`. It does not
-wrap `request run` (including `--dry-run`), `replay`, `ncl apply`,
+`diff` (no `--bodies`), and `doctor`. Nickel check, eval, apply, and pack use
+`tetractl`; `facet ncl` is only a deprecated shim to `tetractl`. It does not
+wrap `request run` (including `--dry-run`), `replay`, `facet apply --frozen`,
 `session start`, `session end`, `blob`, `env set`, `env delete`, or pin create
 and delete. `facet mcp` is unchanged; see below.
+
+### Nickel (`tetractl`) and `apply --frozen`
+
+Nickel configuration is checked, evaluated, applied, and packed with `tetractl
+check`, `tetractl eval`, `tetractl apply`, and `tetractl pack`. `tetractl apply`
+freezes a bundle; `facet apply --frozen <path|->` executes that bundle without the
+Nickel VM (stdin `-` is supported). Successful frozen applies may append a Lattice
+run with request path `ncl:apply` when recording is enabled. `facet ncl` remains a
+deprecated one-release shim that execs `tetractl` (including mapping `ncl export`
+to `tetractl eval`); prefer `tetractl` for new work.
 
 ### `mcp`
 

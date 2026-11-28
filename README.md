@@ -102,8 +102,12 @@ More commands (`facet --help` for flags):
 | `facet replay <runId>` | Re-send a recorded run from the current YAML |
 | `facet diff <idA> <idB>` | Compare two recorded runs, hashes first (exit 1 if different) |
 | `facet theme check <path>` / `facet theme list` | Validate a `facet-tui` theme file; list built-in and discovered themes |
-| `facet ncl check\|export\|apply\|pack` | Check, export, apply, or pack Nickel (`.ncl`) configs, evaluated in-process |
+| `facet ncl check\|export\|apply\|pack` | Deprecated one-release shim to `tetractl` (`export`→`eval`); use `tetractl check\|eval\|apply\|pack` for Nickel |
 | `facet mcp` | Same commands as MCP tools over stdio; still shipped. Agents should prefer the [skill](#agent-use) |
+
+### Platform shape
+
+Tetra hosts the Nickel VM and the `tetractl` toolchain (`check`, `eval`, `apply`, `pack`). A frozen bundle comes from `tetractl apply`; Facet executes it with `facet apply --frozen` and may record the run in Lattice. The `facet ncl` subcommand is a deprecated shim that execs `tetractl` for one release — prefer `tetractl` directly.
 
 Full install guide (wrong-name traps, PATH, versions): **[docs/install.md](docs/install.md)**.
 

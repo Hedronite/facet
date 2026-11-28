@@ -3,9 +3,8 @@ name: facet
 description: >
   Read a Facet collection, its requests, run history, sessions, pins, and
   stored-value names through the facet CLI. Use when a task needs request
-  metadata, a recorded run, a read-only SQL query, a Nickel check or export,
-  or a comparison of two runs. Prefer this skill over the facet MCP server:
-  it adds no tool schemas to context.
+  metadata, a recorded run, a read-only SQL query, or a comparison of two runs.
+  Prefer this skill over the facet MCP server: it adds no tool schemas to context.
 ---
 
 # facet — request history skill
@@ -45,8 +44,6 @@ nu facet.nu session <id|current> [path]
 nu facet.nu pins [path]
 nu facet.nu env [path] [--environment e]     # names only, never values
 nu facet.nu diff <idA> <idB> [path]          # hash-first; no body text
-nu facet.nu ncl-check <module> [path]
-nu facet.nu ncl-export <module> [path]
 nu facet.nu doctor [path]                    # exit 1 is warnings, still a result
 ```
 
@@ -63,8 +60,6 @@ nu facet.nu doctor [path]                    # exit 1 is warnings, still a resul
 | `pins` | `facet pin list` after `cd` into the collection |
 | `env` | `facet env list [--environment <name>]` after `cd`, then `{environment, name}` only |
 | `diff` | `facet diff <idA> <idB>` after `cd`, with no `--bodies` |
-| `ncl-check` | `facet ncl check <module>` after `cd` |
-| `ncl-export` | `facet ncl export <module>` after `cd` |
 | `doctor` | `facet doctor` after `cd` into the collection |
 
 `history` always sends `--limit`. The skill default is 20. The CLI default, when `--limit` is omitted, is 50. `--status` is one HTTP status code (`200`), not a class (`2xx`). `--session current` reads `FACET_SESSION`.
@@ -76,11 +71,18 @@ Reads of `runs.req_body`, `runs.res_body`, `runs.req_headers`, `runs.res_headers
 
 `env` returns `entries` of `{environment, name}` only.
 
+## Nickel (`tetractl`)
+
+Nickel check, eval, apply, and pack run in Tetra, not through this skill. Use
+`tetractl check`, `tetractl eval`, `tetractl apply`, and `tetractl pack` on `.ncl`
+modules. `facet ncl` is a deprecated one-release shim that execs `tetractl`
+(`export` maps to `eval`); prefer `tetractl` directly.
+
 ## Not wrapped, on purpose
 
 - `request run`, including `--dry-run`: sends traffic, and dry-run can hydrate secrets.
 - `replay`: sends traffic, and dry-run can hydrate secrets.
-- `ncl apply`: writes.
+- `facet apply --frozen`: executes a frozen bundle and may write Lattice history.
 - `session start` and `session end`: writes.
 - `blob`: bodies may hold secrets.
 - `env set` and `env delete`: writes.

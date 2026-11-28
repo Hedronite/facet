@@ -244,24 +244,6 @@ def "main sql" [query: string, path: string = ""] {
   } | emit
 }
 
-def absolute [p: string] { $p | path expand }
-
-def "main ncl-check" [module: string, path: string = ""] {
-  if ($module | is-empty) {
-    fail "ncl-check" { stdout: "", stderr: "ncl-check requires <module>", exit_code: 2, refused: true }
-  } else {
-    envelope "ncl-check" ["ncl" "check" (absolute $module)] $path
-  } | emit
-}
-
-def "main ncl-export" [module: string, path: string = ""] {
-  if ($module | is-empty) {
-    fail "ncl-export" { stdout: "", stderr: "ncl-export requires <module>", exit_code: 2, refused: true }
-  } else {
-    envelope "ncl-export" ["ncl" "export" (absolute $module)] $path
-  } | emit
-}
-
 def "main doctor" [path: string = ""] {
   let r = (run-facet ["doctor"] $path)
   let data = (parsed $r.stdout)
