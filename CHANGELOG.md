@@ -6,6 +6,29 @@ separate version axes and do not move with this release.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-28
+
+Changes since v0.8.1. `facet-lattice` stays 0.5.9.
+
+### Removed
+
+- The in-process Nickel VM (`hedron-ncl` and the vendored `nickel-lang-vector`).
+- MCP `ncl_check`, `ncl_export`, and `ncl_apply` tools.
+
+### Changed
+
+- **Breaking:** `facet ncl check|export|apply|pack` is a one-release deprecation shim that execs `tetractl` (`TETRA_BIN`; `export` maps to `eval`). The shim will be removed in the next release.
+- Agent skills and platform docs updated for SHAPE v2 (Nickel lives in tetra-cli, not in the Facet tree).
+
+### Added
+
+- `facet apply --frozen <path|->` executes frozen bundles from `tetractl apply` (schemaVersion 1; shipped on `main` during T3 but unreleased until now).
+- A `no_vm` lockfile guard that refuses `nickel-lang-core` and `hedron-ncl` in `Cargo.lock`.
+
+### Security
+
+- `url` 2.5.9 clears RUSTSEC-2026-0592 (via the frozen-apply work merged in this cycle).
+
 ## [0.8.1] - 2026-11-13
 
 Changes since v0.8.0. `facet-lattice` stays 0.5.9.
