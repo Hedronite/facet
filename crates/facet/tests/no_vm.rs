@@ -54,30 +54,94 @@ fn assert_no_vm_packages(names: &[String]) {
     );
 }
 
+fn inject_package(lock: &str, name: &str, version: &str) -> String {
+    format!("{lock}\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n")
+}
+
+/// `(package name, version)` injected one at a time into a copy of the real lock.
+const FORBIDDEN_INJECTIONS: &[(&str, &str)] = &[
+    ("nickel-lang-core", "0.18.0"),
+    ("hedron-ncl", "0.8.1"),
+    ("nickel-lang-foo", "0.1.0"),
+    ("malachite-base", "0.6.1"),
+];
+
 #[test]
-fn lockfile_has_no_nickel_vm() {
+fn forbidden_injection_table_lists_four_distinct_arms() {
+    assert_eq!(FORBIDDEN_INJECTIONS.len(), 4);
+    let mut names: Vec<&str> = FORBIDDEN_INJECTIONS.iter().map(|(name, _)| *name).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), 4, "each forbidden arm must appear once in the table");
+}
+
+#[test]
+fn parser_sees_nonempty_package_count_on_real_lock() {
     let lock = fs::read_to_string(workspace_lock_path()).expect("read Cargo.lock");
     let names = package_names(&lock);
     assert!(
         !names.is_empty(),
         "Cargo.lock parse found zero packages (vacuous pass)"
     );
+}
+
+#[test]
+fn lockfile_has_no_nickel_vm() {
+    let lock = fs::read_to_string(workspace_lock_path()).expect("read Cargo.lock");
+    let names = package_names(&lock);
+    assert!(!names.is_empty(), "Cargo.lock parse found zero packages (vacuous pass)");
     assert_no_vm_packages(&names);
 }
 
 #[test]
-fn parser_detects_injected_nickel_lang_core() {
+fn forbidden_filter_flags_each_injected_package_individually() {
     let lock = fs::read_to_string(workspace_lock_path()).expect("read Cargo.lock");
-    let mut poisoned = lock.clone();
-    poisoned.push_str("\n[[package]]\nname = \"nickel-lang-core\"\nversion = \"0.18.0\"\n");
-    let names = package_names(&poisoned);
-    assert!(
-        names.iter().any(|name| name == "nickel-lang-core"),
-        "self-test: parser must see injected nickel-lang-core"
+    let mut exercised = 0usize;
+    for &(name, version) in FORBIDDEN_INJECTIONS {
+        let poisoned = inject_package(&lock, name, version);
+        let names = package_names(&poisoned);
+        assert!(
+            names.iter().any(|parsed| parsed == name),
+            "parser must see injected package {name:?}"
+        );
+        let hits = forbidden_vm_packages(&names);
+        assert_eq!(
+            hits.len(),
+            1,
+            "expected exactly one forbidden hit for injected {name:?}, got {hits:?}"
+        );
+        assert_eq!(hits[0], name, "forbidden filter must return exact name {name:?}");
+        exercised += 1;
+    }
+    assert_eq!(
+        exercised,
+        FORBIDDEN_INJECTIONS.len(),
+        "must exercise every table entry (vacuous self-test guard)"
     );
-    let hits = forbidden_vm_packages(&names);
-    assert!(
-        hits.iter().any(|name| name == "nickel-lang-core"),
-        "self-test: forbidden filter must catch nickel-lang-core"
+}
+
+#[test]
+fn decoys_do_not_trigger_forbidden_filter() {
+    let lock = fs::read_to_string(workspace_lock_path()).expect("read Cargo.lock");
+
+    let with_comment = format!("# name = \"nickel-lang-core\"\n{lock}");
+
+    let with_tower = inject_package(&lock, "tower", "0.5.2");
+
+    let with_dep_string = format!(
+        "{lock}\n[[package]]\nname = \"decoy-crate\"\nversion = \"1.0.0\"\ndependencies = [\n \"nickel-lang-core 0.1\",\n]\n"
     );
+
+    for (label, text) in [
+        ("comment line", with_comment.as_str()),
+        ("package tower", with_tower.as_str()),
+        ("dependencies string", with_dep_string.as_str()),
+    ] {
+        let names = package_names(text);
+        let hits = forbidden_vm_packages(&names);
+        assert!(
+            hits.is_empty(),
+            "decoy {label} must not trip forbidden filter (hits: {hits:?}, names: {names:?})"
+        );
+    }
 }
