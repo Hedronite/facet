@@ -16,7 +16,6 @@
 //! goes to stderr only. No HTTP transport in v1.
 
 use std::io::{self, BufRead, Write};
-use std::path::Path;
 
 use lattice::{LatticeConfig, MachineStore, WorkspaceStore};
 use serde_json::{Map, Value, json};
@@ -69,9 +68,6 @@ pub const TOOLS: &[&str] = &[
     "blob_get",
     "run_diff",
     "run_replay",
-    "ncl_check",
-    "ncl_export",
-    "ncl_apply",
     "sql_query",
 ];
 
@@ -389,27 +385,6 @@ fn dispatch(name: &str, arguments: &Map<String, Value>) -> Result<CommandOutput,
             argv.push(args.required("sql")?);
             history::history(&argv)
         }
-        "ncl_check" => {
-            let path = args.required("path")?;
-            let overrides = ncl_overrides(&args)?;
-            let import_paths = ncl_import_paths(&args)?;
-            let result = crate::ncl::check(Path::new(&path), &overrides, &import_paths)?;
-            Ok(CommandOutput::new(Vec::new(), result.to_json()))
-        }
-        "ncl_export" => {
-            let path = args.required("path")?;
-            let overrides = ncl_overrides(&args)?;
-            let import_paths = ncl_import_paths(&args)?;
-            let result = crate::ncl::export(Path::new(&path), &overrides, &import_paths)?;
-            Ok(CommandOutput::new(Vec::new(), result.to_json()))
-        }
-        "ncl_apply" => {
-            let path = args.required("path")?;
-            let overrides = ncl_overrides(&args)?;
-            let import_paths = ncl_import_paths(&args)?;
-            let result = crate::ncl::apply(Path::new(&path), &overrides, &import_paths)?;
-            Ok(CommandOutput::new(Vec::new(), result.to_json()))
-        }
         other => Err(FacetError::invalid_arguments(format!(
             "unknown tool: {other}"
         ))),
@@ -433,19 +408,6 @@ fn delegate(argv: &[&str]) -> Result<CommandOutput, FacetError> {
 /// MCP must not take raw secrets as tool arguments when a Lattice env key
 /// exists: the value would sit in the client's transcript. Hydration
 /// supplies stored values; `facet env set` changes them.
-fn ncl_import_paths(args: &Args) -> Result<Vec<std::path::PathBuf>, FacetError> {
-    crate::args::resolve_ncl_import_paths(args.string("import_path")?.as_deref())
-}
-
-fn ncl_overrides(args: &Args) -> Result<Vec<String>, FacetError> {
-    let pairs = args.vars("var")?;
-    let overrides: Vec<String> = pairs
-        .iter()
-        .map(|(path, value)| format!("{path}={value}"))
-        .collect();
-    crate::args::reject_secret_overrides(&overrides)?;
-    Ok(overrides)
-}
 fn reject_lattice_backed_vars(
     path: &str,
     environment: Option<&str>,
@@ -633,11 +595,6 @@ pub(crate) fn tool_descriptions() -> Vec<Value> {
         "description": "Assert the status after a real run: \"2xx\", \"200,201\", or an array like [200, \"3xx\"]. Miss → exit 1 expect_failed with the full document.",
         "oneOf": [ { "type": "string" }, { "type": "array", "items": { "oneOf": [ { "type": "integer" }, { "type": "string" } ] } } ]
     });
-    let ncl_var = json!({
-        "type": "object",
-        "additionalProperties": { "type": "string" },
-        "description": "Nickel field overrides (path.to.field → expression). Never a secret value or secret field path."
-    });
     let var = json!({
         "type": "object",
         "additionalProperties": { "type": "string" },
@@ -775,42 +732,6 @@ pub(crate) fn tool_descriptions() -> Vec<Value> {
                     "frozen": boolean("Refuse when the resolved request differs from the recorded hash"),
                 }),
                 &["id"],
-            ),
-        ),
-        tool(
-            "ncl_check",
-            "Parse, typecheck and evaluate a Nickel world module in-process. Returns { path, moduleHash, contractSet }. Nothing persisted.",
-            schema(
-                json!({
-                    "path": string("Path to a .ncl module"),
-                    "var": ncl_var.clone(),
-                    "import_path": string("Materialized pack root (--import-path / FACET_NCL_IMPORT_PATH)"),
-                }),
-                &["path"],
-            ),
-        ),
-        tool(
-            "ncl_export",
-            "eval_full_for_export on a Nickel world module. Returns { path, moduleHash, exportHash, contractSet, cluster, intent, calls }. Fields marked | not_exported are absent.",
-            schema(
-                json!({
-                    "path": string("Path to a .ncl module"),
-                    "var": ncl_var.clone(),
-                    "import_path": string("Materialized pack root (--import-path / FACET_NCL_IMPORT_PATH)"),
-                }),
-                &["path"],
-            ),
-        ),
-        tool(
-            "ncl_apply",
-            "Export a Nickel world module, POST frozen cluster JSON when FACET_KUBECONFIG is set, put intent rows through Hedron Store when FACET_HEDRON_DB is set, and record one ncl:apply Lattice row. Returns export fields plus action summary.",
-            schema(
-                json!({
-                    "path": string("Path to a .ncl module"),
-                    "var": ncl_var.clone(),
-                    "import_path": string("Materialized pack root (--import-path / FACET_NCL_IMPORT_PATH)"),
-                }),
-                &["path"],
             ),
         ),
         tool(

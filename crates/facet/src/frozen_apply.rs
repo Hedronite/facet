@@ -1,7 +1,7 @@
 //! Execute a `schemaVersion: 1` frozen apply bundle without Nickel.
 //!
-//! This module must not import the Nickel VM crate, `ncl`, `ncl_apply`, `ncl_ledger`,
-//! `ncl_pack`, `args`, `run`, or `workspace`.
+//! This module must not import the Nickel VM crate, `ncl_shim`, `frozen_ledger`,
+//! `args`, `run`, or `workspace`.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -636,18 +636,23 @@ mod tests {
     }
 
     #[test]
-    fn docs_eod_check_shape_matches_hedron_ncl() {
+    fn docs_eod_check_shape_pinned_fixtures() {
         let valid = json!({"kind":"docs_eod","date":"2026-09-12","required_briefs":[]});
         let e4 = json!({"kind":"docs_eod","date":1,"required_briefs":[]});
         let e6 = json!({"kind":"nope","date":"2026-09-12","required_briefs":[]});
-        for spec in [&valid, &e4, &e6] {
-            let a = crate::docs_eod::check_shape(spec)
-                .map(|s| s.date.clone())
-                .map_err(|e| e.to_string());
-            let b = hedron_ncl::r#gen::docs_eod::check_shape(spec)
-                .map(|s| s.date.clone())
-                .map_err(|e| e.to_string());
-            assert_eq!(a, b);
-        }
+        assert_eq!(
+            crate::docs_eod::check_shape(&valid)
+                .map(|s| s.date)
+                .map_err(|e| e.to_string()),
+            Ok("2026-09-12".to_owned())
+        );
+        assert_eq!(
+            crate::docs_eod::check_shape(&e4).map_err(|e| e.to_string()),
+            Err("docs_eod spec: invalid type: integer `1`, expected a string".to_owned())
+        );
+        assert_eq!(
+            crate::docs_eod::check_shape(&e6).map_err(|e| e.to_string()),
+            Err("unknown desired state kind \"nope\"".to_owned())
+        );
     }
 }
