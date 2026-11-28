@@ -225,6 +225,14 @@ environment names and the complete inheritance graph, including duplicate names,
 missing parents, and cycles. This validation is shared by `collection validate`
 and every operation that loads a workspace.
 
+## Nickel and frozen apply
+
+Facet never evaluates Nickel in-process. Tetra's `tetractl` checks, evaluates,
+packs, and freezes bundles; `tetractl apply` emits a schemaVersion 1 frozen bundle.
+`facet apply --frozen` executes that bundle without the VM and may record an
+`ncl:apply` row in Lattice when recording is enabled. `facet ncl` is a deprecated
+one-release shim that delegates to `tetractl`; new Nickel work belongs in Tetra.
+
 ## Concurrency
 
 Application-facing state has clear ownership. Slow operations execute outside the

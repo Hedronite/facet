@@ -4,6 +4,13 @@ Facet is a native, local-first API client built with Rust and OpenCollection YAM
 The CLI and Ratatui TUI are adapters over shared application/domain operations;
 the Facet MCP surface uses the same application layer.
 
+## Platform shape (Nickel)
+
+- Facet is the OpenCollection API client, the frozen-bundle executor (`facet apply --frozen`), and the Lattice run ledger; it never hosts the Nickel VM.
+- Nickel check, eval, apply, and pack live in Tetra (`tetractl`).
+- `facet ncl` is a deprecated one-release shim that execs `tetractl` (including `export`→`eval`); do not extend it.
+- `crates/facet/tests/no_vm.rs` parses the workspace `Cargo.lock` and fails if Nickel VM crates reappear.
+
 ## Read Only What the Task Needs
 
 After this file, inspect the affected code and read only the matching reference:
