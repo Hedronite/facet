@@ -72,7 +72,11 @@ fn forbidden_injection_table_lists_four_distinct_arms() {
     let mut names: Vec<&str> = FORBIDDEN_INJECTIONS.iter().map(|(name, _)| *name).collect();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 4, "each forbidden arm must appear once in the table");
+    assert_eq!(
+        names.len(),
+        4,
+        "each forbidden arm must appear once in the table"
+    );
 }
 
 #[test]
@@ -89,7 +93,10 @@ fn parser_sees_nonempty_package_count_on_real_lock() {
 fn lockfile_has_no_nickel_vm() {
     let lock = fs::read_to_string(workspace_lock_path()).expect("read Cargo.lock");
     let names = package_names(&lock);
-    assert!(!names.is_empty(), "Cargo.lock parse found zero packages (vacuous pass)");
+    assert!(
+        !names.is_empty(),
+        "Cargo.lock parse found zero packages (vacuous pass)"
+    );
     assert_no_vm_packages(&names);
 }
 
@@ -110,7 +117,10 @@ fn forbidden_filter_flags_each_injected_package_individually() {
             1,
             "expected exactly one forbidden hit for injected {name:?}, got {hits:?}"
         );
-        assert_eq!(hits[0], name, "forbidden filter must return exact name {name:?}");
+        assert_eq!(
+            hits[0], name,
+            "forbidden filter must return exact name {name:?}"
+        );
         exercised += 1;
     }
     assert_eq!(
